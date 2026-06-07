@@ -2109,8 +2109,10 @@ def cancel_scheduled(sched_id: str):
 
 def scheduled_email_worker():
     """Thread qui envoie les emails planifiés à l'heure prévue."""
+    time.sleep(3)  # Laisser le temps au module de finir l'initialisation
     while True:
         try:
+            global app_state
             now = time.time()
             sched = app_state.get("scheduled_emails", {})
             to_send = [(sid, s) for sid, s in list(sched.items()) if s.get("send_at", 0) <= now and s.get("status") == "pending"]
@@ -2515,9 +2517,11 @@ def local_cron_worker():
     Exécute _run_full_cycle selon l'intervalle configuré.
     """
     log.info("[CRON] Thread local démarré")
+    time.sleep(3)  # Laisser le temps au module de finir l'initialisation
     last_run = 0
     while True:
         try:
+            global app_state
             enabled = app_state.get("auto_run_enabled", False)
             interval = app_state.get("auto_run_interval_min", 5) * 60
             now = time.time()

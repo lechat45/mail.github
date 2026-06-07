@@ -1,0 +1,24 @@
+﻿# Secrets
+.env
+credentials.json
+token.json
+token.enc
+token.enc.hash
+emailai_state.json
+emailai_state.json.hash
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Divers
+fix.ps1
+install.ps1
+install_render.ps1

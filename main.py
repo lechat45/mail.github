@@ -386,15 +386,38 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse as _JSONResponse
 import secrets as _sec2
 
+# Origines CORS autorisées (référence)
+_CORS_ORIGINS = {"http://localhost:5173", "http://localhost:3000", "https://lechat45.github.io"}
+
+def _add_cors_headers(response, origin):
+    """Ajoute les headers CORS sur n'importe quelle réponse (même 401)."""
+    if origin in _CORS_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-API-Key, X-Cron-Secret"
+        response.headers["Access-Control-Max-Age"] = "3600"
+    return response
+
 class _AuthMW(BaseHTTPMiddleware):
-    _PUBLIC = {"/auth/status","/auth/login","/health","/cron/run"}
+    _PUBLIC = {"/auth/status","/auth/login","/health","/cron/run","/"}
     async def dispatch(self, req, call_next):
+        origin = req.headers.get("origin","")
+        # Pre-flight OPTIONS : toujours autoriser sans token
+        if req.method == "OPTIONS":
+            from starlette.responses import Response
+            return _add_cors_headers(Response(status_code=200), origin)
+        # Routes publiques
         if req.url.path in self._PUBLIC or req.url.path.startswith("/auth/"):
-            return await call_next(req)
+            response = await call_next(req)
+            return _add_cors_headers(response, origin)
+        # Vérification token
         tk = req.headers.get("X-API-Key","") or req.query_params.get("api_key","")
         if LOCAL_API_TOKEN and (not tk or not _sec2.compare_digest(tk, LOCAL_API_TOKEN)):
-            return _JSONResponse({"detail":"Token API requis"}, status_code=401)
-        return await call_next(req)
+            resp = _JSONResponse({"detail":"Token API requis"}, status_code=401)
+            return _add_cors_headers(resp, origin)
+        # Requête authentifiée
+        response = await call_next(req)
+        return _add_cors_headers(response, origin)
 
 app.add_middleware(_AuthMW)
 

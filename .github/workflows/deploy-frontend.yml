@@ -3,13 +3,7 @@ name: Deploy Frontend to GitHub Pages
 on:
   push:
     branches: [main]
-    paths:
-      - 'src/**'
-      - 'index.html'
-      - 'vite.config.js'
-      - 'package.json'
-
-  workflow_dispatch:  # Déclenchement manuel
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,7 +20,6 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,15 +28,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --no-package-lock
 
-      - name: Build
+      - name: Build with Vite
         run: npm run build
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
+
+      - name: List dist content
+        run: ls -la dist/
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -53,6 +48,6 @@ jobs:
         with:
           path: './dist'
 
-      - name: Deploy to GitHub Pages
+      - name: Deploy
         id: deployment
         uses: actions/deploy-pages@v4

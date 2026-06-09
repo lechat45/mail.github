@@ -2,18 +2,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Cache buster — incrémenter pour forcer rebuild
-ARG CACHE_BUST=2
+ARG CACHE_BUST=3
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc curl && rm -rf /var/lib/apt/lists/*
 
-# Dépendances Python
 RUN pip install --no-cache-dir \
     fastapi \
     "uvicorn[standard]" \
     google-auth \
     google-auth-oauthlib \
+    google-auth-httplib2 \
     google-api-python-client \
     groq \
     python-dotenv \
@@ -21,10 +20,8 @@ RUN pip install --no-cache-dir \
     pydantic \
     starlette
 
-# Copier le code (APRÈS pip install = cache séparé)
 COPY main.py .
 
-# Port Render
 ENV PORT=8000
 EXPOSE $PORT
 

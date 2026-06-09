@@ -437,11 +437,11 @@ def get_creds():
 def get_gmail():
     creds = get_creds()
     if not creds: raise HTTPException(401, "Non authentifie")
-    # SECURITE: timeout sur les appels Gmail (évite les blocages DoS)
-    # SECURITE: timeout sur les appels Gmail (evite les blocages DoS)
+    # SECURITE: timeout sur les appels Gmail via AuthorizedHttp
     import httplib2
-    http = httplib2.Http(timeout=30)
-    return build("gmail", "v1", credentials=creds, http=http)
+    from google_auth_httplib2 import AuthorizedHttp
+    authed_http = AuthorizedHttp(creds, http=httplib2.Http(timeout=30))
+    return build("gmail", "v1", http=authed_http, cache_discovery=False)
 def decode_part(part):
     data = part.get("body", {}).get("data", "")
     return base64.urlsafe_b64decode(data).decode("utf-8", errors="replace") if data else ""

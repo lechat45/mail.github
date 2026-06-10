@@ -18,6 +18,7 @@ RUN pip install --no-cache-dir \
     python-dotenv \
     httplib2 \
     pydantic \
+    fpdf2 \
     starlette
 
 COPY main.py .

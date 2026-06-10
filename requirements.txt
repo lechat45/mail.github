@@ -9,3 +9,4 @@ python-dotenv
 httplib2
 pydantic
 starlette
+fpdf2

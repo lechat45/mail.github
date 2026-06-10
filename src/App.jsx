@@ -125,6 +125,33 @@ async function fetchWithTimeout(url, options={}, timeoutMs=30000) {
 }
 
 // fetch simple avec token (pour les cas sans timeout custom)
+
+// ══════════════════════════════════════════════════════════════
+// CACHE API — évite les requêtes dupliquées (TTL en ms)
+// ══════════════════════════════════════════════════════════════
+const _apiCache = new Map()
+const _cacheInflight = new Map()
+
+function cachedFetch(url, ttlMs = 30000) {
+  const now = Date.now()
+  const cached = _apiCache.get(url)
+  if (cached && now - cached.ts < ttlMs) return Promise.resolve(cached.data)
+  // Dédupliquer les requêtes en vol
+  if (_cacheInflight.has(url)) return _cacheInflight.get(url)
+  const req = apiFetch(url)
+    .then(r => r.json())
+    .then(data => { _apiCache.set(url, {data, ts: Date.now()}); _cacheInflight.delete(url); return data })
+    .catch(e => { _cacheInflight.delete(url); throw e })
+  _cacheInflight.set(url, req)
+  return req
+}
+
+function invalidateCache(pattern) {
+  for (const key of _apiCache.keys()) {
+    if (!pattern || key.includes(pattern)) _apiCache.delete(key)
+  }
+}
+
 function apiFetch(url, options={}) {
   const token = getApiToken()
   return fetch(url, {
@@ -208,11 +235,24 @@ const SoundFX = {
   }
 }
 
+
+// ── Z-Index cohérent ──────────────────────────────────────────────────────────
+const Z = {
+  base: 1, sidebar: 10, toolbar: 20, dropdown: 50,
+  modal: 100, toast: 9999, overlay: 500, floating: 200
+}
+
 // ── Icones SVG manquantes dans la version de lucide ──────────────────────────
 
 const Pin = ({size,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
 const Upload = ({size,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-const Edit2 = ({size,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+const MailX = ({size=16,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h9"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/><path d="m17 17 5 5m0-5-5 5"/></svg>
+const History = ({size=16,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+const MapPin = ({size=16,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+const Timer = ({size=16,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 2h4"/><path d="M12 14v-4"/><circle cx="12" cy="14" r="8"/></svg>
+const Bookmark = ({size=16,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+const ExternalLink = ({size=16,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+const Circle = ({size=16,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/></svg>
 const Plus = ({size,color,...p}) => <svg {...p} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color||"currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
 
 
@@ -303,15 +343,15 @@ function Field({T,label,sub,children}) {
   return <div style={{marginBottom:18}}><label style={{display:"block",fontSize:11,fontWeight:800,color:T.textSub,marginBottom:6,letterSpacing:"0.06em"}}>{label}</label>{sub&&<p style={{fontSize:11,color:T.textFaint,marginBottom:8,lineHeight:1.5}}>{sub}</p>}{children}</div>
 }
 function Toast({toast}) {
-  if(!toast) return null; const ok=toast.type!=="err"
-  const clr=toast.type==="warn"?AC.orange:ok?AC.green:AC.red
-  return <div style={{position:"fixed",bottom:32,left:"50%",transform:"translateX(-50%)",zIndex:999,padding:"13px 22px",borderRadius:16,fontSize:13,fontWeight:600,background:`rgba(10,15,30,0.92)`,color:clr,border:`1px solid ${clr}35`,...fl(10),boxShadow:`0 8px 32px rgba(0,0,0,0.6),0 0 0 1px ${clr}15,inset 0 1px 0 rgba(255,255,255,0.05)`,backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",animation:"fadeUp .18s cubic-bezier(.34,1.26,.64,1)",whiteSpace:"nowrap",maxWidth:"90vw"}}>
-    <div style={{width:24,height:24,borderRadius:8,background:`${clr}18`,border:`1px solid ${clr}25`,...fl(0,"center","center"),flexShrink:0}}>
-      {toast.type==="warn"?<AlertTriangle size={13} color={clr}/>:ok?<Check size={13} color={clr}/>:<AlertCircle size={13} color={clr}/>}
-    </div>
-    <span>{toast.msg}</span>
+  if(!toast) return null
+  const cfg={"err":{bg:"rgba(42,10,10,0.95)",b:"#EF4444",c:"#FCA5A5",icon:"✕"},"success":{bg:"rgba(10,42,26,0.95)",b:"#22C55E",c:"#86EFAC",icon:"✓"},"warn":{bg:"rgba(42,26,0,0.95)",b:"#F59E0B",c:"#FCD34D",icon:"⚠"},"info":{bg:"rgba(10,26,42,0.95)",b:"#3B82F6",c:"#93C5FD",icon:"ℹ"}}
+  const t=cfg[toast.type]||cfg.success
+  return <div style={{position:"fixed",bottom:28,left:"50%",transform:"translateX(-50%)",zIndex:9999,padding:"12px 20px",background:t.bg,border:`1px solid ${t.b}50`,borderRadius:14,color:t.c,fontSize:13,fontWeight:600,boxShadow:`0 8px 32px rgba(0,0,0,0.6),0 0 0 1px ${t.b}20`,animation:"fadeIn .2s ease",maxWidth:380,display:"flex",gap:8,alignItems:"center",backdropFilter:"blur(16px)"}}>
+    <span style={{flexShrink:0,fontWeight:900}}>{t.icon}</span>
+    <span style={{overflow:'hidden',textOverflow:'ellipsis'}}>{toast.msg}</span>
   </div>
 }
+
 function GS({T}) {
   return <style>{`
     @keyframes spin{to{transform:rotate(360deg)}}
@@ -344,7 +384,7 @@ function GS({T}) {
 const NL = ({children,T}) => <div style={{fontSize:9,fontWeight:800,color:"#3A4A5E",letterSpacing:"0.14em",padding:"14px 12px 5px",textTransform:"uppercase"}}>{children}</div>
 function NB({T,Icon,label,active,onClick,badge,color}) {
   const ac=color||AC.blue
-  return <button onClick={onClick} style={{width:"100%",textAlign:"left",padding:"7px 10px",background:active?`${ac}12`:"transparent",border:"none",borderRadius:10,color:active?ac:"#7A8BAA",fontSize:12.5,cursor:"pointer",marginBottom:1,...fl(9),fontFamily:"inherit",fontWeight:active?700:400,transition:"all .13s",position:"relative"}}
+  return <button className="sidebar-item" onClick={onClick} style={{width:"100%",textAlign:"left",padding:"7px 10px",background:active?`${ac}12`:"transparent",border:"none",borderRadius:10,color:active?ac:"#7A8BAA",fontSize:12.5,cursor:"pointer",marginBottom:1,...fl(9),fontFamily:"inherit",fontWeight:active?700:400,transition:"all .13s",position:"relative"}}
     onMouseEnter={e=>{if(!active){e.currentTarget.style.background="#ffffff0a";e.currentTarget.style.color="#C0CDE0"}}}
     onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color="#7A8BAA"}}}>
     {active&&<div style={{position:"absolute",left:-8,top:"50%",transform:"translateY(-50%)",width:3,height:18,borderRadius:2,background:ac,boxShadow:`0 0 8px ${ac}`}}/>}
@@ -378,7 +418,7 @@ function TokenSetupModal({T,onSave}) {
     }catch{setTestOk(false)}finally{setTesting(false)}
   }
 
-  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:500,...fl(0,"center","center"),backdropFilter:"blur(8px)"}}>
+  return <div className="modal-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:500,...fl(0,"center","center"),backdropFilter:"blur(8px)"}}>
     <div style={{background:"#0D1527",border:`1px solid ${AC.blue}40`,borderRadius:24,padding:"48px 56px",maxWidth:480,width:"90%",textAlign:"center",boxShadow:`0 16px 64px rgba(0,0,0,0.7),0 0 0 1px ${AC.blue}20`}}>
       <div style={{width:64,height:64,borderRadius:20,background:AC.grad1,...fl(0,"center","center"),margin:"0 auto 24px",boxShadow:`0 8px 32px ${AC.blueGlow}`}}>
         <Shield size={30} color="#fff"/>
@@ -410,6 +450,349 @@ function TokenSetupModal({T,onSave}) {
       </div>
     </div>
   </div>
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NOUVELLES FEATURES VISUELLES
+// ══════════════════════════════════════════════════════════════════════════════
+
+
+// Debounce — évite les requêtes à chaque frappe
+
+// Préchargement silencieux de l'email suivant
+function useEmailPreload(emails, selectedId) {
+  useEffect(() => {
+    if (!emails || !selectedId) return
+    const idx = emails.findIndex(e => e.id === selectedId)
+    if (idx >= 0 && idx < emails.length - 1) {
+      const nextId = emails[idx+1].id
+      setTimeout(() => {
+        cachedFetch(`${API}/emails/${nextId}`, 120000).catch(()=>{})
+      }, 500)
+    }
+  }, [selectedId, emails])
+}
+
+function useDebounce(value, delay) {
+  const [debouncedValue, setDebouncedValue] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedValue(value), delay)
+    return () => clearTimeout(timer)
+  }, [value, delay])
+  return debouncedValue
+}
+
+
+// ── Empty State — écran vide élégant ─────────────────────────────────────────
+function EmptyState({T, icon="📭", title="Rien ici", subtitle="", action=null, actionLabel=""}) {
+  return <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,padding:60,textAlign:"center",color:T.text}}>
+    <div style={{fontSize:48,opacity:0.3,animation:"bounce 2s ease infinite"}}>{icon}</div>
+    <div>
+      <div style={{fontSize:16,fontWeight:700,color:T.textSub,marginBottom:6}}>{title}</div>
+      {subtitle&&<div style={{fontSize:13,color:T.textFaint,maxWidth:280,lineHeight:1.6}}>{subtitle}</div>}
+    </div>
+    {action&&<button onClick={action} style={{padding:"10px 24px",background:"linear-gradient(135deg,#3B82F6,#6366F1)",border:"none",borderRadius:12,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:"inherit",fontSize:13}}>{actionLabel}</button>}
+  </div>
+}
+
+// ── Skeleton Loader ────────────────────────────────────────────────────────
+function SkeletonLine({w="100%",h=14,radius=6,style={}}) {
+  return <div style={{width:w,height:h,borderRadius:radius,background:"linear-gradient(90deg,#1a2540 25%,#243050 50%,#1a2540 75%)",backgroundSize:"200% 100%",animation:"shimmer 1.4s infinite",...style}}/>
+}
+function SkeletonCard({T}) {
+  return <div style={{padding:"16px 18px",borderBottom:`1px solid ${T.border}`,...fl(14)}}>
+    <div style={{width:40,height:40,borderRadius:12,background:"#1a2540",flexShrink:0}}/>
+    <div style={{flex:1,display:"flex",flexDirection:"column",gap:8}}>
+      <SkeletonLine w="60%"/><SkeletonLine w="40%" h={10}/>
+    </div>
+  </div>
+}
+
+// ── Undo Bar ───────────────────────────────────────────────────────────────
+function UndoBar({T,action,onUndo,onDismiss}) {
+  const [progress,setProgress]=useState(100)
+  useEffect(()=>{
+    const start=Date.now();const dur=5000
+    const tick=setInterval(()=>{
+      const pct=Math.max(0,100-(Date.now()-start)/dur*100)
+      setProgress(pct);if(pct<=0){clearInterval(tick);onDismiss()}
+    },50)
+    return()=>clearInterval(tick)
+  },[])
+  return <div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",background:"#1E2D4A",border:`1px solid ${AC.blue}40`,borderRadius:16,padding:"14px 20px",zIndex:200,boxShadow:"0 8px 32px rgba(0,0,0,0.5)",...fl(14),"minWidth":320}}>
+    <div style={{position:"absolute",bottom:0,left:0,height:3,background:AC.blue,borderRadius:"0 0 16px 16px",width:progress+"%",transition:"width .05s linear"}}/>
+    <span style={{fontSize:13,color:"#E8EDF8",flex:1}}>{action.label}</span>
+    <button onClick={onUndo} style={{padding:"5px 14px",background:AC.blueDim,border:`1px solid ${AC.blue}40`,borderRadius:9,color:AC.blue,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",...fl(4)}}><Undo size={11}/> Annuler</button>
+    <button onClick={onDismiss} style={{background:"none",border:"none",color:"#3D5068",cursor:"pointer",...fl(0,"center","center")}}><X size={14}/></button>
+  </div>
+}
+
+// ── Smart Replies ──────────────────────────────────────────────────────────
+function SmartReplies({T,emailId,onSelect}) {
+  const [replies,setReplies]=useState(null),[loading,setLoading]=useState(false)
+  const load=async()=>{
+    setLoading(true)
+    try{const d=await apiFetch(`${API}/emails/${emailId}/smart-replies`).then(r=>r.json());setReplies(d.replies||[])}
+    catch{setReplies([])}finally{setLoading(false)}
+  }
+  useEffect(()=>{if(emailId)load()},[emailId])
+  if(!replies&&!loading) return null
+  return <div style={{marginTop:12,padding:"12px 16px",background:T.bg3,borderRadius:12,border:`1px solid ${T.border}`}}>
+    <div style={{fontSize:11,fontWeight:700,color:T.textSub,marginBottom:8,letterSpacing:"0.06em",...fl(6)}}><Sparkles size={11} color={AC.violet}/> RÉPONSES RAPIDES</div>
+    {loading?<div style={{...fl(8)}}>{[1,2,3].map(i=><SkeletonLine key={i} w={80+i*20+"px"} h={28} radius={9}/>)}</div>
+    :<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      {(replies||[]).map((r,i)=><button key={i} onClick={()=>onSelect(r)} style={{padding:"6px 12px",background:T.bg2,border:`1px solid ${AC.violet}30`,borderRadius:20,fontSize:12,color:T.text,cursor:"pointer",fontFamily:"inherit",transition:"all .15s"}} onMouseEnter={e=>{e.target.style.background=AC.violetDim;e.target.style.borderColor=AC.violet}} onMouseLeave={e=>{e.target.style.background=T.bg2;e.target.style.borderColor=AC.violet+"30"}}>{r}</button>)}
+    </div>}
+  </div>
+}
+
+// ── Shortcuts Modal ────────────────────────────────────────────────────────
+function ShortcutsModal({T,onClose}) {
+  const groups = [
+    {title:"Navigation",items:[["E","Archiver email sélectionné"],["Suppr","Supprimer"],["S","Étoiler / Désétoiler"],["U","Marquer non lu"],["Z","Mode Zen (Focus)"]]},
+    {title:"Interface",items:[["?","Afficher ce modal"],["Ctrl+Z","Annuler la dernière action"],["Échap","Fermer / Annuler"],["A+","Agrandir la police"],["A-","Réduire la police"]]},
+    {title:"Composition",items:[["Ctrl+Entrée","Envoyer l'email en cours"],["Ctrl+K","Barre de recherche"]]},
+  ]
+  return <div className="modal-overlay" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:500,...fl(0,"center","center"),backdropFilter:"blur(4px)"}} onClick={onClose}>
+    <div style={{background:"#0D1527",border:`1px solid ${AC.blue}30`,borderRadius:20,padding:32,maxWidth:520,width:"90%",maxHeight:"80vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div style={{...fl(0,"space-between","center"),marginBottom:24}}>
+        <div style={{fontSize:18,fontWeight:800,color:"#E8EDF8",...fl(8)}}><Keyboard size={18} color={AC.blue}/> Raccourcis clavier</div>
+        <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:"#3D5068",...fl(0,"center","center")}}><X size={18}/></button>
+      </div>
+      {groups.map(g=><div key={g.title} style={{marginBottom:24}}>
+        <div style={{fontSize:11,fontWeight:800,color:AC.blue,letterSpacing:"0.08em",marginBottom:10}}>{g.title.toUpperCase()}</div>
+        {g.items.map(([k,desc])=><div key={k} style={{...fl(0,"space-between","center"),padding:"7px 0",borderBottom:`1px solid #1A2540`}}>
+          <span style={{fontSize:13,color:"#94A3B8"}}>{desc}</span>
+          <kbd style={{padding:"3px 8px",background:"#1A2540",border:"1px solid #2A3A5A",borderRadius:6,fontSize:11,fontWeight:700,color:"#E8EDF8",fontFamily:"monospace"}}>{k}</kbd>
+        </div>)}
+      </div>)}
+    </div>
+  </div>
+}
+
+// ── AIConfigView ────────────────────────────────────────────────────────────
+function AIConfigView({T,showToast}) {
+  const [cfg,setCfg]=useState(null),[models,setModels]=useState([]),[presets,setPresets]=useState({})
+  const [saving,setSaving]=useState(false),[testing,setTesting]=useState(false),[testResult,setTestResult]=useState(null)
+  useEffect(()=>{
+    Promise.all([
+      apiFetch(`${API}/ai-config`).then(r=>r.json()),
+      cachedFetch(`${API}/ai-config/models`, 1800000),
+      cachedFetch(`${API}/ai-config/presets`, 1800000),
+    ]).then(([c,m,p])=>{setCfg(c);setModels(m.models||[]);setPresets(p.presets||{})}).catch(console.error)
+  },[])
+  const save=async()=>{setSaving(true);try{await apiFetch(`${API}/ai-config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});showToast("Config IA sauvegardée !")}catch(e){showToast("Erreur","err")}finally{setSaving(false)}}
+  const test=async()=>{setTesting(true);setTestResult(null);try{const d=await apiFetch(`${API}/ai-config/test`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)}).then(r=>r.json());setTestResult(d)}catch(e){setTestResult({ok:false,error:e.message})}finally{setTesting(false)}}
+  const applyPreset=(name)=>{const p=presets[name];if(p&&cfg)setCfg({...cfg,...p})}
+  if(!cfg) return <div style={{flex:1,...fl(0,"center","center")}}><Spin size={32}/></div>
+  return <div style={{flex:1,overflowY:"auto",padding:"32px 40px",color:T.text}}>
+    <div style={{maxWidth:760,margin:"0 auto"}}>
+      <div style={{...fl(14),marginBottom:28}}>
+        <div style={{width:52,height:52,borderRadius:16,background:AC.grad2,...fl(0,"center","center")}}><Sparkles size={24} color="#fff"/></div>
+        <div><h2 style={{fontSize:26,fontWeight:900,letterSpacing:"-0.03em"}}>Moteur IA</h2><p style={{color:T.textSub,fontSize:13,marginTop:3}}>Configure le modèle, la température et le style d'analyse</p></div>
+      </div>
+      {/* Présets */}
+      <div style={{marginBottom:24}}>
+        <div style={{fontSize:11,fontWeight:800,color:T.textSub,marginBottom:10,letterSpacing:"0.06em"}}>PRÉSETS RAPIDES</div>
+        <div style={{...fl(8),flexWrap:"wrap"}}>
+          {Object.entries(presets).map(([name,p])=><button key={name} onClick={()=>applyPreset(name)} style={{padding:"7px 16px",background:T.bg2,border:`1px solid ${T.border}`,borderRadius:20,fontSize:12,color:T.text,cursor:"pointer",fontFamily:"inherit",fontWeight:600,textTransform:"capitalize"}}>{name}</button>)}
+        </div>
+      </div>
+      <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,padding:24,marginBottom:20}}>
+        <Field T={T} label="MODÈLE IA">
+          <select value={cfg.model} onChange={e=>setCfg({...cfg,model:e.target.value})} style={{width:"100%",padding:"10px 14px",background:T.bg3,border:`1px solid ${T.border}`,borderRadius:10,color:T.text,fontSize:13,fontFamily:"inherit",outline:"none"}}>
+            {(models||[]).map(m=><option key={m.id} value={m.id}>{m.name} — {m.desc}</option>)}
+          </select>
+        </Field>
+        <Field T={T} label={`TEMPÉRATURE: ${cfg.temperature} (0=précis, 1=créatif)`}>
+          <div style={{...fl(10)}}>
+            <span style={{fontSize:11,color:T.textFaint}}>0</span>
+            <input type="range" min="0" max="1" step="0.1" value={cfg.temperature} onChange={e=>setCfg({...cfg,temperature:parseFloat(e.target.value)})} style={{flex:1,accentColor:AC.violet}}/>
+            <span style={{fontSize:11,color:T.textFaint}}>1</span>
+          </div>
+        </Field>
+        <Field T={T} label="PROFONDEUR D'ANALYSE">
+          <div style={{...fl(8)}}>
+            {["quick","normal","deep"].map(d=><button key={d} onClick={()=>setCfg({...cfg,depth:d})} style={{flex:1,padding:"8px",background:cfg.depth===d?AC.violetDim:T.bg3,border:`1px solid ${cfg.depth===d?AC.violet:T.border}`,borderRadius:10,color:cfg.depth===d?AC.violet:T.textSub,fontWeight:cfg.depth===d?700:400,cursor:"pointer",fontFamily:"inherit",fontSize:12,textTransform:"capitalize"}}>{d==="quick"?"⚡ Rapide":d==="normal"?"⚖️ Normal":"🔬 Approfondi"}</button>)}
+          </div>
+        </Field>
+        <Field T={T} label="SECTEUR D'ACTIVITÉ (optionnel)">
+          <SI T={T} value={cfg.business_sector||""} onChange={e=>setCfg({...cfg,business_sector:e.target.value})} placeholder="Ex: informatique, e-commerce, médical..."/>
+        </Field>
+        <Field T={T} label="MOTS-CLÉS PRIORITAIRES (séparés par virgule)">
+          <SI T={T} value={(cfg.priority_keywords||[]).join(", ")} onChange={e=>setCfg({...cfg,priority_keywords:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)})} placeholder="Ex: urgent, facture, client"/>
+        </Field>
+        <Field T={T} label="EXPÉDITEURS VIP (séparés par virgule)">
+          <SI T={T} value={(cfg.vip_senders||[]).join(", ")} onChange={e=>setCfg({...cfg,vip_senders:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)})} placeholder="Ex: patron@entreprise.com"/>
+        </Field>
+      </div>
+      <div style={{...fl(8)}}>
+        <Btn T={T} variant="ghost" onClick={test} disabled={testing} style={{padding:"10px 20px"}}>
+          {testing?<Spin size={13} color={AC.cyan}/>:<Zap size={13}/>} {testing?"Test...":"Tester le modèle"}
+        </Btn>
+        <Btn T={T} variant="primary" onClick={save} disabled={saving} style={{flex:1}}>
+          {saving?<Spin size={13} color="#fff"/>:<Check size={13}/>} Sauvegarder la configuration
+        </Btn>
+      </div>
+      {testResult&&<div style={{marginTop:12,padding:"12px 16px",background:testResult.ok?AC.greenDim:AC.orangeDim,borderRadius:12,border:`1px solid ${testResult.ok?AC.green:AC.orange}30`,fontSize:12,color:testResult.ok?AC.green:AC.orange}}>
+        {testResult.ok?"✓ Modèle actif et fonctionnel":"✗ Erreur: "+(testResult.error||"inconnue")}
+      </div>}
+    </div>
+  </div>
+}
+
+// ── Advanced Search Panel ───────────────────────────────────────────────────
+function AdvancedSearchPanel({T,onSearch,onClose}) {
+  const [form,setForm]=useState({from_addr:"",to_addr:"",subject:"",body_contains:"",date_after:"",date_before:"",has_attachment:false,is_unread:false})
+  const [loading,setLoading]=useState(false)
+  const search=async()=>{
+    setLoading(true)
+    try{
+      const d=await apiFetch(`${API}/emails/search-advanced`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...form,max_results:30})}).then(r=>r.json())
+      onSearch(d.emails||[],d.query||"")
+    }catch(e){console.error(e)}finally{setLoading(false)}
+  }
+  const u=(k,v)=>setForm(p=>({...p,[k]:v}))
+  return <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,padding:20,margin:"8px 12px"}}>
+    <div style={{...fl(0,"space-between","center"),marginBottom:16}}>
+      <span style={{fontSize:13,fontWeight:700,...fl(6)}}><Search size={13} color={AC.blue}/> Recherche avancée</span>
+      <button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:T.textFaint}}><X size={14}/></button>
+    </div>
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+      {[["De","from_addr","Ex: boss@gmail.com"],["À","to_addr","Ex: moi@gmail.com"],["Objet","subject","Mots dans le sujet"],["Contient","body_contains","Texte dans le corps"]].map(([label,key,ph])=>
+        <div key={key}><div style={{fontSize:10,fontWeight:700,color:T.textFaint,marginBottom:4}}>{label}</div><SI T={T} value={form[key]} onChange={e=>u(key,e.target.value)} placeholder={ph} style={{fontSize:12}}/></div>
+      )}
+    </div>
+    <div style={{...fl(8,undefined,"center"),marginBottom:12,flexWrap:"wrap",gap:12}}>
+      {[["has_attachment","📎 Pièce jointe"],["is_unread","● Non lu"]].map(([k,label])=>
+        <label key={k} style={{...fl(6),"cursor":"pointer","userSelect":"none",fontSize:12,color:T.textSub}}>
+          <input type="checkbox" checked={form[k]} onChange={e=>u(k,e.target.checked)} style={{accentColor:AC.blue}}/>{label}
+        </label>
+      )}
+    </div>
+    <Btn T={T} variant="primary" onClick={search} disabled={loading} full>
+      {loading?<Spin size={13} color="#fff"/>:<Search size={13}/>} Rechercher
+    </Btn>
+  </div>
+}
+
+
+
+// ── CSS globaux injectés au démarrage ────────────────────────────────────────
+const GlobalStyles = () => {
+  useEffect(() => {
+    const style = document.createElement("style")
+    style.textContent = `
+      /* ═══ Animations ═══ */
+      @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+      @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+      @keyframes slideIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
+      @keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+      @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+      @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+      @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
+      @keyframes glow { 0%,100%{box-shadow:0 0 12px rgba(99,102,241,0.25)} 50%{box-shadow:0 0 24px rgba(99,102,241,0.5)} }
+      @keyframes scaleIn { from{opacity:0;transform:scale(0.96)} to{opacity:1;transform:scale(1)} }
+
+      /* ═══ Scrollbar ═══ */
+      ::-webkit-scrollbar { width: 5px; height: 5px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: rgba(100,116,139,0.25); border-radius: 10px; }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,0.55); }
+      * { scrollbar-width: thin; scrollbar-color: rgba(100,116,139,0.25) transparent; }
+
+      /* ═══ Focus accessible ═══ */
+      *:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; border-radius: 4px; }
+
+      /* ═══ Interactions ═══ */
+      button, a, [role="button"] { transition: opacity .15s ease, background .15s ease, color .15s ease, border-color .15s ease, transform .1s ease, box-shadow .2s ease; }
+      button:not(:disabled):active { transform: scale(0.96); }
+      button:disabled { cursor: not-allowed; opacity: 0.45; }
+
+      /* ═══ Cards ═══ */
+      .card-hover { transition: transform .18s cubic-bezier(.34,1.3,.64,1), box-shadow .18s ease, border-color .18s ease; }
+      .card-hover:hover { transform: translateY(-2px); box-shadow: 0 6px 28px rgba(0,0,0,0.35); }
+
+      /* ═══ Email rows ═══ */
+      .email-row { animation: fadeIn .18s ease both; transition: background .12s ease, border-color .12s ease, padding-left .15s ease; position: relative; }
+      .email-row:hover { padding-left: 22px !important; }
+      .email-row::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: linear-gradient(180deg, #6366F1, #3B82F6); transition: width .15s ease; border-radius: 0 3px 3px 0; }
+      .email-row:hover::before { width: 3px; }
+
+      /* ═══ Stagger animation pour les listes ═══ */
+      .email-row:nth-child(1) { animation-delay: 0ms; }
+      .email-row:nth-child(2) { animation-delay: 25ms; }
+      .email-row:nth-child(3) { animation-delay: 50ms; }
+      .email-row:nth-child(4) { animation-delay: 75ms; }
+      .email-row:nth-child(5) { animation-delay: 100ms; }
+      .email-row:nth-child(n+6) { animation-delay: 120ms; }
+
+      /* ═══ Sidebar ═══ */
+      .sidebar-item { transition: background .12s, color .12s, padding-left .15s; }
+      .sidebar-item:hover { padding-left: 18px !important; }
+
+      /* ═══ Inputs ═══ */
+      input, textarea, select { transition: border-color .15s ease, box-shadow .2s ease, background .15s ease; }
+      input:focus, textarea:focus, select:focus { box-shadow: 0 0 0 3px rgba(99,102,241,0.13); border-color: #6366F1 !important; }
+      input::placeholder, textarea::placeholder { color: rgba(148,163,184,0.4); }
+
+      /* ═══ Modals ═══ */
+      .modal-overlay { animation: fadeIn .15s ease; }
+      .modal-content { animation: scaleIn .2s cubic-bezier(.34,1.3,.64,1); }
+
+      /* ═══ Divers ═══ */
+      ::selection { background: rgba(99,102,241,0.3); }
+      .badge-pulse { animation: pulse 2s infinite; }
+      button, .sidebar-item { user-select: none; -webkit-user-select: none; }
+      img { max-width: 100%; }
+
+      /* ═══ Réduire le motion si demandé ═══ */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+      }
+    `
+    document.head.appendChild(style)
+    return () => { try { document.head.removeChild(style) } catch {} }
+  }, [])
+  return null
+}// ── ErrorBoundary — capture les erreurs de rendu React ──────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+  componentDidCatch(error, info) {
+    console.error("[EmailAI] Render error:", error, info)
+  }
+  render() {
+    if (this.state.hasError) {
+      const T = this.props.theme || {}
+      return (
+        <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16,padding:40,background:T.bg||"#080C18",color:T.text||"#E8EDF8"}}>
+          <div style={{width:64,height:64,borderRadius:20,background:"#2A0A0A",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <span style={{fontSize:28}}>⚠️</span>
+          </div>
+          <div style={{textAlign:"center"}}>
+            <h3 style={{fontSize:18,fontWeight:800,marginBottom:8,color:"#EF4444"}}>Erreur de rendu</h3>
+            <p style={{fontSize:13,color:T.textSub||"#94A3B8",marginBottom:20}}>
+              {this.state.error?.message || "Une erreur inattendue s'est produite"}
+            </p>
+            <button
+              onClick={()=>this.setState({hasError:false,error:null})}
+              style={{padding:"10px 24px",background:"#3B82F6",border:"none",borderRadius:10,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}
+            >
+              Réessayer
+            </button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -483,9 +866,9 @@ function EmailList({T,emails,onSelect,selected,loading,compact,doAction,settings
     <span style={{fontSize:13}}>Aucun email</span>
   </div>
   return <div style={{overflowY:"auto",flex:1}}>
-    {emails.map(e=>{
+    {(emails||[]).map(e=>{
       const sel=selected===e.id,hv=hov===e.id,chk=selectedIds.has(e.id)
-      return <div key={e.id} onMouseEnter={()=>setHov(e.id)} onMouseLeave={()=>setHov(null)}
+      return <div key={e.id} className="email-row" onMouseEnter={()=>setHov(e.id)} onMouseLeave={()=>setHov(null)}
         style={{padding:compact?"9px 14px":"12px 14px",borderBottom:`1px solid ${T.border}`,background:sel?`${AC.blue}10`:chk?`${AC.indigo}08`:hv?T.bg3:"transparent",borderLeft:`3px solid ${sel?AC.blue:chk?AC.indigo:"transparent"}`,cursor:"pointer",position:"relative",transition:"background .1s"}}>
         <div style={{...fl(8,"flex-start")}}>
           <div onClick={ev=>{ev.stopPropagation();setSelectedIds(p=>{const n=new Set(p);n.has(e.id)?n.delete(e.id):n.add(e.id);return n})}} style={{width:16,height:16,flexShrink:0,marginTop:1,opacity:multi||hv?1:0,transition:"opacity .15s",cursor:"pointer"}}>
@@ -621,6 +1004,7 @@ function EmailDetail({T,emailId,settings,profile,doAction,showToast,emailMeta}) 
           </button>
         </div>
         {[
+          {Icon:Bookmark,label:"Sauver en template",fn:async()=>{const name=prompt("Nom du modèle ?","Modèle");if(!name)return;await apiFetch(`${API}/emails/${emailId}/save-template?template_name=${encodeURIComponent(name)}`,{method:"POST"});showToast("Modèle sauvegardé !")}},
           {Icon:emailMeta?.pinned?Pin:Pin,label:emailMeta?.pinned?"Désépingler":"Épingler",fn:async()=>{await apiFetch(`${API}/emails/${emailId}/pin`,{method:"POST"});showToast(emailMeta?.pinned?"Désépinglé":"Épinglé !")}},
           {Icon:emailMeta?.starred?StarOff:Star,label:emailMeta?.starred?"Retirer":"Favori",fn:()=>doAction(emailId,emailMeta?.starred?"unstar":"star")},
           {Icon:Archive,label:"Archiver",fn:()=>doAction(emailId,"archive")},
@@ -709,6 +1093,7 @@ function EmailDetail({T,emailId,settings,profile,doAction,showToast,emailMeta}) 
         <Btn T={T} variant="ghost" onClick={()=>setShowDraft("quick")}><Reply size={14}/> Reponse rapide</Btn>
         {analysis&&<Btn T={T} variant="ghost" onClick={analyze} disabled={anaLoad}>{anaLoad?<Spin size={13}/>:<RefreshCw size={13}/>} Re-analyser</Btn>}
       </div>}
+      {emailId&&<SmartReplies T={T} emailId={emailId} onSelect={(txt)=>{setShowDraft("reply")}}/> }
       {showDraft==="ai"&&<DraftPanel T={T} emailId={emailId} settings={settings} profile={profile} showToast={showToast} onClose={()=>setShowDraft(false)}/>}
       {showDraft==="quick"&&<QuickReplyPanel T={T} email={email} showToast={showToast} onClose={()=>setShowDraft(false)}/>}
     </div>
@@ -793,6 +1178,7 @@ function DraftPanel({T,emailId,settings,profile,onClose,showToast}) {
         <span style={{fontSize:10,color:pct>90?AC.red:T.textFaint,fontWeight:600,minWidth:60,textAlign:"right"}}>{edited.length}/{settings.maxDraftLength}</span>
       </div>
       <textarea value={edited} onChange={e=>setEdited(e.target.value)} style={{width:"100%",minHeight:180,padding:"14px 16px",background:T.bg,border:`1px solid ${T.border}`,borderRadius:12,fontSize:13,lineHeight:1.75,resize:"vertical",outline:"none",boxSizing:"border-box",color:T.text,fontFamily:"inherit",marginBottom:10}} onFocus={e=>e.target.style.borderColor=T.borderFocus} onBlur={e=>e.target.style.borderColor=T.border}/>
+        <ToneBar T={T} text={body}/>
       {grammarResult&&grammarResult.errors?.length>0&&<div style={{padding:"10px 14px",background:T.bg3,borderRadius:10,marginBottom:10}}>
         <div style={{...fl(6),fontWeight:600,color:AC.orange,marginBottom:6,fontSize:12}}><ShieldCheck size={12}/> {grammarResult.errors.length} suggestion{grammarResult.errors.length>1?"s":""} de correction</div>
         {grammarResult.errors.slice(0,3).map((e,i)=><div key={i} style={{fontSize:11,color:T.textSub,marginBottom:3}}>• "{e.text}" → {e.correction} <span style={{color:T.textFaint}}>({e.type})</span></div>)}
@@ -910,7 +1296,7 @@ function TemplatesView({T,showToast}) {
 // ── Stats ──────────────────────────────────────────────────────────────────────
 function StatsView({T}) {
   const [stats,setStats]=useState(null),[loading,setLoading]=useState(true)
-  useEffect(()=>{Promise.all([apiFetch(`${API}/stats?max_results=50`).then(r=>r.json()),apiFetch(`${API}/stats/categories`).then(r=>r.json())]).then(([s,c])=>setStats({...s,...c})).catch(console.error).finally(()=>setLoading(false))},[])
+  useEffect(()=>{Promise.all([cachedFetch(`${API}/stats?max_results=50`, 300000),apiFetch(`${API}/stats/categories`).then(r=>r.json())]).then(([s,c])=>setStats({...s,...c})).catch(console.error).finally(()=>setLoading(false))},[])
   if(loading) return <div style={{flex:1,...fl(0,"center","center")}}><Spin size={32}/></div>
   if(!stats) return null
   const mx=Math.max(...(stats.top_senders?.map(s=>s.count)||[1]))
@@ -1037,7 +1423,7 @@ function AutoReplyView({T,showToast}) {
     apiFetch(`${API}/auto-reply`).then(r=>r.json()).then(setConfig).catch(console.error)
     apiFetch(`${API}/monitoring`).then(r=>r.json()).then(setMonitoring).catch(console.error)
     apiFetch(`${API}/rate-limiter`).then(r=>r.json()).then(setRateLimit).catch(console.error)
-    const id=setInterval(()=>apiFetch(`${API}/rate-limiter`).then(r=>r.json()).then(setRateLimit).catch(()=>{}),5000)
+    const id=setInterval(()=>apiFetch(`${API}/rate-limiter`).then(r=>r.json()).then(setRateLimit).catch(()=>{}),30000)
     return()=>clearInterval(id)
   },[])
   const save_=async()=>{setSaving(true);try{await apiFetch(`${API}/auto-reply`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(config)});showToast("Sauvegarde !")}catch{showToast("Erreur","err")}finally{setSaving(false)}}
@@ -1129,6 +1515,7 @@ function SettingsView({T,settings,setSettings}) {
   const Sec=({title,color,Icon:I,children})=><div style={{marginBottom:24}}><div style={{...fl(8),marginBottom:10}}><div style={{width:28,height:28,borderRadius:8,background:`${color}18`,color,...fl(0,"center","center")}}><I size={14}/></div><span style={{fontSize:11,fontWeight:800,color,letterSpacing:"0.08em"}}>{title}</span></div><div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:14,overflow:"hidden"}}>{children}</div></div>
   return <div style={{flex:1,overflowY:"auto",padding:"32px 40px",color:T.text}}>
     <div style={{maxWidth:680,margin:"0 auto"}}>
+      <NotificationSetup T={T} showToast={showToast}/>
       <div style={{...fl(12),justifyContent:"space-between",marginBottom:28}}>
         <div style={{...fl(12)}}><div style={{width:44,height:44,borderRadius:14,background:AC.grad1,...fl(0,"center","center")}}><Settings size={20} color="#fff"/></div><div><h2 style={{fontSize:24,fontWeight:800,letterSpacing:"-0.02em"}}>Configuration</h2><p style={{color:T.textSub,fontSize:13}}>Parametres du moteur IA</p></div></div>
         <Btn T={T} variant="ghost" onClick={reset} style={{fontSize:12,padding:"7px 14px"}}><RotateCcw size={12}/> Reset</Btn>
@@ -1186,50 +1573,9 @@ function BulkBar({T,selectedIds,setSelectedIds,doAction,showToast}) {
 
 
 // ── Modal raccourcis clavier ──────────────────────────────────────────────────
-function ShortcutsModal({T,onClose}) {
-  const groups = [
-    {title:"Navigation",shortcuts:[["1-4","Changer d'onglet (Inbox/Non lus/Favoris/Envoyés)"],["↑↓","Email précédent/suivant (TODO)"]]},
-    {title:"Actions email",shortcuts:[["E","Archiver l'email sélectionné"],["Suppr","Supprimer l'email sélectionné"],["S","Marquer favori"],["U","Marquer non lu"]]},
-    {title:"Interface",shortcuts:[["Ctrl+K","Barre de recherche"],["?","Afficher ces raccourcis"],["Échap","Fermer / Annuler"]]},
-    {title:"IA",shortcuts:[["Alt+A","Analyser avec l'IA"],["Alt+R","Répondre avec l'IA"]]},
-  ]
-  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:200,...fl(0,"center","center"),backdropFilter:"blur(4px)"}} onClick={onClose}>
-    <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:20,padding:28,maxWidth:500,width:"90%",boxShadow:T.cardShadow,animation:"fadeUp .2s"}} onClick={e=>e.stopPropagation()}>
-      <div style={{...fl(8),marginBottom:20}}><Keyboard size={18} color={AC.blue}/><h3 style={{fontSize:16,fontWeight:800,color:T.text}}>Raccourcis clavier</h3><button onClick={onClose} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",color:T.textFaint,...fl(0,"center","center")}}><X size={18}/></button></div>
-      {groups.map(g=><div key={g.title} style={{marginBottom:16}}>
-        <div style={{fontSize:10,fontWeight:800,color:T.textFaint,letterSpacing:"0.08em",marginBottom:8}}>{g.title.toUpperCase()}</div>
-        {g.shortcuts.map(([k,d])=><div key={k} style={{...fl(10,"center","space-between"),padding:"6px 0",borderBottom:`1px solid ${T.border}`}}>
-          <span style={{fontSize:13,color:T.textSub}}>{d}</span>
-          <kbd style={{padding:"3px 9px",background:T.bg4,border:`1px solid ${T.border}`,borderRadius:6,fontSize:11,color:T.text,fontFamily:"monospace"}}>{k}</kbd>
-        </div>)}
-      </div>)}
-    </div>
-  </div>
-}
 
 // ── UndoBar : annuler la derniere action (archive/delete) ─────────────────────
-function UndoBar({T,action,onUndo,onDismiss}) {
-  const [prog,setProg]=useState(100)
-  useEffect(()=>{
-    const interval=setInterval(()=>setProg(p=>{if(p<=0){clearInterval(interval);onDismiss();return 0}return p-2}),60)
-    return()=>clearInterval(interval)
-  },[])
-  const labels={archive:"Archive",trash:"Supprime",spam:"Spam"}
-  return <div style={{position:"fixed",bottom:28,right:28,zIndex:97,background:T.bg2,border:`1px solid ${T.border}`,borderRadius:14,padding:"12px 18px",boxShadow:T.cardShadow,animation:"fadeUp .2s",minWidth:260}}>
-    <div style={{...fl(10,"center","space-between"),marginBottom:8}}>
-      <span style={{fontSize:13,color:T.text,fontWeight:600}}>{labels[action?.type]||action?.type}</span>
-      <button onClick={onUndo} style={{background:AC.blueDim,color:AC.blue,border:`1px solid ${AC.blue}25`,borderRadius:8,padding:"5px 14px",fontSize:12,cursor:"pointer",fontFamily:"inherit",fontWeight:700}}>Annuler</button>
-      <button onClick={onDismiss} style={{background:"none",border:"none",cursor:"pointer",color:T.textFaint,...fl(0,"center","center")}}><X size={14}/></button>
-    </div>
-    <div style={{height:3,background:T.bg4,borderRadius:2,overflow:"hidden"}}><div style={{height:"100%",width:`${prog}%`,background:AC.blue,borderRadius:2,transition:"width .1s linear"}}/></div>
-  </div>
-}
 
-
-
-
-
-// ── Badge prédiction de réponse nécessaire ───────────────────────────────────
 function ReplyNeededBadge({T,emailId}) {
   const [pred,setPred]=useState(null)
   useEffect(()=>{
@@ -1249,25 +1595,7 @@ function ReplyNeededBadge({T,emailId}) {
 }
 
 // ── Smart Replies : suggestions rapides IA ───────────────────────────────────
-function SmartReplies({T,emailId,onSelect,showToast}) {
-  const [replies,setReplies]=useState(null),[loading,setLoading]=useState(false)
-  const load=async()=>{
-    setLoading(true)
-    try{const d=await apiFetch(`${API}/emails/${emailId}/smart-replies`).then(r=>r.json());setReplies(d.replies||[])}
-    catch{setReplies([])}finally{setLoading(false)}
-  }
-  if(!replies) return <button onClick={load} disabled={loading} style={{...fl(5),fontSize:11,color:T.textFaint,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",marginBottom:10}}>
-    {loading?<Spin size={10} color={T.textFaint}/>:<Sparkles size={10}/>} {loading?"Suggestions...":"Suggestions IA"}
-  </button>
-  if(!replies.length) return null
-  return <div style={{...fl(6),flexWrap:"wrap",marginBottom:12}}>
-    {replies.map((r,i)=><button key={i} onClick={()=>{onSelect(r.text);showToast("Reponse chargee")}} style={{padding:"5px 12px",background:AC.indigoDim,border:`1px solid ${AC.indigo}20`,borderRadius:20,fontSize:11,cursor:"pointer",color:AC.indigo,fontFamily:"inherit",fontWeight:600,...fl(5)}}>
-      <Zap size={9}/> {r.label}
-    </button>)}
-  </div>
-}
 
-// ── Bannière emails épinglés ──────────────────────────────────────────────────
 function PinnedBanner({T,onSelect,selected}) {
   const [pinned,setPinned]=useState([])
   useEffect(()=>{
@@ -1288,42 +1616,7 @@ function PinnedBanner({T,onSelect,selected}) {
 }
 
 // ── Recherche avancée ─────────────────────────────────────────────────────────
-function AdvancedSearchPanel({T,onSearch,onClose}) {
-  const [form,setForm]=useState({from_addr:"",subject:"",has_attachment:false,is_unread:false,after_date:"",before_date:""})
-  const [loading,setLoading]=useState(false)
-  const upd=(k,v)=>setForm(p=>({...p,[k]:v}))
-  const run=async()=>{
-    setLoading(true)
-    try{
-      const r=await apiFetch(`${API}/emails/search-advanced`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(form)})
-      const d=await r.json()
-      onSearch(d.emails||[], d.query||"")
-      onClose()
-    }catch{onClose()}finally{setLoading(false)}
-  }
-  return <div style={{position:"absolute",top:0,left:0,right:0,background:T.bg2,border:`1px solid ${T.border}`,borderRadius:"0 0 14px 14px",padding:16,zIndex:10,boxShadow:T.cardShadow,animation:"fadeUp .2s"}}>
-    <div style={{...fl(8),marginBottom:12,justifyContent:"space-between"}}><span style={{fontSize:12,fontWeight:800,color:T.textSub}}>RECHERCHE AVANCÉE</span><button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:T.textFaint}}><X size={14}/></button></div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
-      {[{k:"from_addr",ph:"De: email@ex.com"},{k:"subject",ph:"Objet contient..."}].map(({k,ph})=>(
-        <input key={k} value={form[k]} onChange={e=>upd(k,e.target.value)} placeholder={ph} style={{padding:"7px 10px",background:T.bg3,border:`1px solid ${T.border}`,borderRadius:8,fontSize:12,color:T.text,outline:"none",fontFamily:"inherit"}}/>
-      ))}
-      <input type="date" value={form.after_date} onChange={e=>upd("after_date",e.target.value)} placeholder="Après" style={{padding:"7px 10px",background:T.bg3,border:`1px solid ${T.border}`,borderRadius:8,fontSize:12,color:T.text,outline:"none",fontFamily:"inherit"}}/>
-      <input type="date" value={form.before_date} onChange={e=>upd("before_date",e.target.value)} placeholder="Avant" style={{padding:"7px 10px",background:T.bg3,border:`1px solid ${T.border}`,borderRadius:8,fontSize:12,color:T.text,outline:"none",fontFamily:"inherit"}}/>
-    </div>
-    <div style={{...fl(12),marginBottom:12}}>
-      {[{k:"has_attachment",l:"Pièces jointes"},{k:"is_unread",l:"Non lus"}].map(({k,l})=>(
-        <label key={k} style={{...fl(6),fontSize:12,color:T.textSub,cursor:"pointer"}}>
-          <input type="checkbox" checked={form[k]} onChange={e=>upd(k,e.target.checked)} style={{accentColor:AC.blue}}/>{l}
-        </label>
-      ))}
-    </div>
-    <Btn T={T} variant="primary" onClick={run} disabled={loading} full style={{fontSize:12,padding:"8px"}}>
-      {loading?<Spin size={12} color="#fff"/>:<Search size={12}/>} {loading?"Recherche...":"Rechercher"}
-    </Btn>
-  </div>
-}
 
-// ── Reponse rapide sans IA ────────────────────────────────────────────────────
 function QuickReplyPanel({T,email,showToast,onClose}) {
   const [body,setBody]=useState(""),[sending,setSending]=useState(false)
   const QUICK_TEXTS=["Merci pour votre email.","Bien recu, je reviens vers vous rapidement.","Je prends note, merci.","D'accord, c'est note.","Pouvez-vous me donner plus de details ?"]
@@ -1359,186 +1652,6 @@ function QuickReplyPanel({T,email,showToast,onClose}) {
 
 
 // ── Configuration avancée du moteur IA ───────────────────────────────────────
-function AIConfigView({T,showToast}) {
-  const [cfg,setCfg]=useState(null)
-  const [models,setModels]=useState([])
-  const [presets,setPresets]=useState([])
-  const [saving,setSaving]=useState(false)
-  const [testing,setTesting]=useState(false)
-  const [testResult,setTestResult]=useState(null)
-  const [newKw,setNewKw]=useState("")
-  const [newVip,setNewVip]=useState("")
-  const [newCat,setNewCat]=useState("")
-  const [activeTab,setActiveTab]=useState("model")
-
-  useEffect(()=>{
-    Promise.all([
-      apiFetch(`${API}/ai-config`).then(r=>r.json()),
-      apiFetch(`${API}/ai-config/models`).then(r=>r.json()),
-      apiFetch(`${API}/ai-config/presets`).then(r=>r.json()),
-    ]).then(([c,m,p])=>{setCfg(c);setModels(m.models||[]);setPresets(p.presets||[])}).catch(console.error)
-  },[])
-
-  const upd=(k,v)=>setCfg(p=>({...p,[k]:v}))
-  const addToList=(key,val,setVal)=>{if(!val.trim())return;upd(key,[...(cfg[key]||[]),val.trim()]);setVal("")}
-  const removeFromList=(key,i)=>upd(key,(cfg[key]||[]).filter((_,idx)=>idx!==i))
-
-  const save=async()=>{
-    setSaving(true)
-    try{const r=await apiFetch(`${API}/ai-config`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});const d=await r.json();if(!r.ok)throw new Error(d.detail);showToast("Configuration IA sauvegardee !")}
-    catch(e){showToast("Erreur: "+e.message,"err")}finally{setSaving(false)}
-  }
-  const testCfg=async()=>{
-    setTesting(true);setTestResult(null)
-    try{const r=await apiFetch(`${API}/ai-config/test`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});const d=await r.json();setTestResult(d)}
-    catch(e){setTestResult({ok:false,message:"Erreur: "+e.message})}finally{setTesting(false)}
-  }
-  const applyPreset=(preset)=>{setCfg(p=>({...p,...preset.config}));showToast(`Preset "${preset.name}" applique !`)}
-
-  const TABS=[{id:"model",l:"Modele IA"},{id:"analysis",l:"Analyse"},{id:"rules",l:"Regles metier"},{id:"advanced",l:"Avance"}]
-  const RS=({label,sub,ctrl})=><div style={{...fl(12),padding:"12px 16px",borderBottom:`1px solid ${T.border}`,...fl(12,"center")}}><div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:T.text}}>{label}</div>{sub&&<div style={{fontSize:11,color:T.textSub,marginTop:2}}>{sub}</div>}</div>{ctrl}</div>
-
-  if(!cfg) return <div style={{flex:1,...fl(0,"center","center")}}><Spin size={32}/></div>
-
-  return <div style={{flex:1,overflowY:"auto",padding:"32px 40px",color:T.text}}>
-    <div style={{maxWidth:820,margin:"0 auto"}}>
-      {/* Header */}
-      <div style={{...fl(12),marginBottom:28}}>
-        <div style={{width:44,height:44,borderRadius:14,background:`linear-gradient(135deg,${AC.indigo},${AC.violet})`,...fl(0,"center","center")}}><Sparkles size={20} color="#fff"/></div>
-        <div style={{flex:1}}>
-          <h2 style={{fontSize:24,fontWeight:800,letterSpacing:"-0.02em"}}>Configuration IA</h2>
-          <p style={{color:T.textSub,fontSize:13}}>Paramètres avancés du moteur d'analyse</p>
-        </div>
-        <div style={{...fl(8)}}>
-          <Btn T={T} variant="ghost" onClick={testCfg} disabled={testing} style={{fontSize:12,padding:"8px 14px"}}>
-            {testing?<Spin size={12}/>:<Zap size={12}/>} Tester
-          </Btn>
-          <Btn T={T} variant="primary" onClick={save} disabled={saving} style={{fontSize:12,padding:"8px 14px"}}>
-            {saving?<Spin size={12} color="#fff"/>:<Check size={12}/>} Sauvegarder
-          </Btn>
-        </div>
-      </div>
-
-      {/* Test result */}
-      {testResult&&<div style={{padding:"12px 16px",borderRadius:12,marginBottom:20,background:testResult.ok?AC.greenDim:AC.redDim,border:`1px solid ${testResult.ok?AC.green:AC.red}25`,...fl(10)}}>
-        {testResult.ok?<ShieldCheck size={16} color={AC.green}/>:<AlertTriangle size={16} color={AC.red}/>}
-        <div><div style={{fontSize:13,fontWeight:700,color:testResult.ok?AC.green:AC.red}}>{testResult.message}</div>
-        {testResult.response&&<div style={{fontSize:11,color:T.textSub,marginTop:3}}>{testResult.response}</div>}</div>
-      </div>}
-
-      {/* Presets */}
-      <div style={{...fl(8),flexWrap:"wrap",marginBottom:24}}>
-        {presets.map(p=><button key={p.id} onClick={()=>applyPreset(p)} style={{padding:"8px 16px",background:T.bg2,border:`1px solid ${T.border}`,borderRadius:12,fontSize:12,cursor:"pointer",color:T.text,fontFamily:"inherit",transition:"all .12s",...fl(6)}} onMouseEnter={e=>{e.currentTarget.style.borderColor=AC.indigo;e.currentTarget.style.color=AC.indigo}} onMouseLeave={e=>{e.currentTarget.style.borderColor=T.border;e.currentTarget.style.color=T.text}}>
-          <Zap size={11}/> {p.name} <span style={{fontSize:10,color:T.textFaint}}>— {p.desc}</span>
-        </button>)}
-      </div>
-
-      {/* Tabs */}
-      <div style={{...fl(4),marginBottom:20,background:T.bg2,border:`1px solid ${T.border}`,borderRadius:12,padding:4}}>
-        {TABS.map(t=><button key={t.id} onClick={()=>setActiveTab(t.id)} style={{flex:1,padding:"8px 12px",background:activeTab===t.id?AC.indigoDim:"transparent",border:`1px solid ${activeTab===t.id?AC.indigo+"30":"transparent"}`,borderRadius:9,fontSize:12,fontWeight:activeTab===t.id?700:400,cursor:"pointer",color:activeTab===t.id?AC.indigo:T.textSub,fontFamily:"inherit",transition:"all .12s"}}>{t.l}</button>)}
-      </div>
-
-      {/* Tab: Modèle */}
-      {activeTab==="model"&&<div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,overflow:"hidden",marginBottom:20}}>
-        <div style={{padding:"16px 18px",borderBottom:`1px solid ${T.border}`}}>
-          <div style={{fontSize:11,fontWeight:800,color:T.textSub,letterSpacing:"0.08em",marginBottom:14}}>MODÈLE GROQ</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-            {models.map(mod=><button key={mod.id} onClick={()=>upd("model",mod.id)} style={{padding:"14px",background:cfg.model===mod.id?AC.indigoDim:T.bg3,border:`2px solid ${cfg.model===mod.id?AC.indigo:T.border}`,borderRadius:12,cursor:"pointer",textAlign:"left",fontFamily:"inherit",transition:"all .15s"}}>
-              <div style={{...fl(8,"center","space-between"),marginBottom:6}}>
-                <span style={{fontSize:13,fontWeight:700,color:cfg.model===mod.id?AC.indigo:T.text}}>{mod.name}</span>
-                <span style={{fontSize:11,color:AC.gold}}>{mod.quality}</span>
-              </div>
-              <div style={{fontSize:11,color:T.textSub,lineHeight:1.4,marginBottom:4}}>{mod.desc}</div>
-              <div style={{...fl(6)}}><span style={{padding:"2px 8px",background:`${cfg.model===mod.id?AC.indigo:"#64748B"}20`,color:cfg.model===mod.id?AC.indigo:"#64748B",borderRadius:10,fontSize:10,fontWeight:600}}>⚡ {mod.speed}</span></div>
-            </button>)}
-          </div>
-        </div>
-        <RS label="Profondeur d'analyse" sub={{"quick":"Rapide et économe (1 appel API)","normal":"Équilibrée (2 appels API, recommandé)","deep":"Approfondie — résumé détaillé + deadline + risque (2-3 appels API)"}[cfg.analysis_depth]||""} ctrl={<Sel T={T} value={cfg.analysis_depth||"normal"} onChange={v=>upd("analysis_depth",v)} options={[["quick","⚡ Rapide"],["normal","⚖️ Normal"],["deep","🔬 Approfondie"]]}/>}/>
-      </div>}
-
-      {/* Tab: Analyse */}
-      {activeTab==="analysis"&&<div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,overflow:"hidden",marginBottom:20}}>
-        <RS label="Inclure les tâches à faire" sub="Détecte et liste les actions demandées dans l'email" ctrl={<Tog T={T} on={cfg.include_tasks!==false} set={v=>upd("include_tasks",v)} color={AC.indigo}/>}/>
-        <RS label="Inclure les points clés" sub="Extrait les informations importantes (dates, montants, noms)" ctrl={<Tog T={T} on={cfg.include_key_info!==false} set={v=>upd("include_key_info",v)} color={AC.indigo}/>}/>
-        <RS label="Analyse du sentiment" sub="Détecte le ton (positif, négatif, urgent)" ctrl={<Tog T={T} on={cfg.include_sentiment!==false} set={v=>upd("include_sentiment",v)} color={AC.indigo}/>}/>
-        <RS label="Action recommandée" sub="Suggère quoi faire avec l'email" ctrl={<Tog T={T} on={cfg.include_action!==false} set={v=>upd("include_action",v)} color={AC.indigo}/>}/>
-        <RS label="Analyse de sécurité" sub="Détecte phishing et injections de prompts" ctrl={<Tog T={T} on={cfg.include_security!==false} set={v=>upd("include_security",v)} color={AC.green}/>}/>
-        <RS label={`Créativité classification : ${cfg.temperature_classify||0.1}`} sub="Bas = précis, haut = créatif. Recommandé : 0.1 pour la classification" ctrl={<input type="range" min={0} max={0.5} step={0.05} value={cfg.temperature_classify||0.1} onChange={e=>upd("temperature_classify",Number(e.target.value))} style={{width:120,accentColor:AC.indigo}}/>}/>
-        <RS label={`Créativité analyse : ${cfg.temperature_analyze||0.3}`} sub="Recommandé : 0.3 pour un bon équilibre qualité/précision" ctrl={<input type="range" min={0} max={1} step={0.05} value={cfg.temperature_analyze||0.3} onChange={e=>upd("temperature_analyze",Number(e.target.value))} style={{width:120,accentColor:AC.indigo}}/>}/>
-        <RS label={`Créativité rédaction : ${cfg.temperature_draft||0.5}`} sub="Recommandé : 0.5 pour les brouillons" ctrl={<input type="range" min={0} max={1} step={0.05} value={cfg.temperature_draft||0.5} onChange={e=>upd("temperature_draft",Number(e.target.value))} style={{width:120,accentColor:AC.violet}}/>}/>
-        <RS label={`Tokens analyse max : ${cfg.max_tokens_analyze||1500}`} sub="Plus de tokens = réponses plus longues (consomme plus de quota)" ctrl={<div style={{...fl(4)}}><span style={{fontSize:10,color:T.textFaint}}>200</span><input type="range" min={200} max={3000} step={100} value={cfg.max_tokens_analyze||1500} onChange={e=>upd("max_tokens_analyze",Number(e.target.value))} style={{width:110,accentColor:AC.cyan}}/><span style={{fontSize:10,color:T.textFaint}}>3000</span></div>}/>
-      </div>}
-
-      {/* Tab: Règles métier */}
-      {activeTab==="rules"&&<div style={{marginBottom:20}}>
-        <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,padding:20,marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>Secteur d'activité</div>
-          <div style={{fontSize:11,color:T.textSub,marginBottom:10}}>Aide l'IA à contextualiser les analyses (ex: "immobilier", "e-commerce", "conseil RH")</div>
-          <SI T={T} value={cfg.business_sector||""} onChange={e=>upd("business_sector",e.target.value)} placeholder="Ex: consulting IT, e-commerce, cabinet médical..."/>
-        </div>
-        <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,padding:20,marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>Expéditeurs VIP <span style={{color:AC.gold}}>★</span></div>
-          <div style={{fontSize:11,color:T.textSub,marginBottom:10}}>Ces expéditeurs ont automatiquement priorité "Haute" — entrer une partie de l'email suffit</div>
-          <div style={{...fl(8),marginBottom:10}}>
-            <SI T={T} value={newVip} onChange={e=>setNewVip(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addToList("vip_senders",newVip,setNewVip)} placeholder="boss@company.com ou @company.com"/>
-            <Btn T={T} variant="secondary" onClick={()=>addToList("vip_senders",newVip,setNewVip)} disabled={!newVip.trim()} style={{flexShrink:0}}>+</Btn>
-          </div>
-          <div style={{...fl(6),flexWrap:"wrap"}}>
-            {(cfg.vip_senders||[]).map((v,i)=><div key={i} style={{...fl(6),padding:"4px 12px",background:AC.orangeDim,border:`1px solid ${AC.orange}20`,borderRadius:20,fontSize:12,color:AC.orange}}>
-              ★ {v}<button onClick={()=>removeFromList("vip_senders",i)} style={{background:"none",border:"none",cursor:"pointer",color:AC.orange,marginLeft:4,...fl(0,"center","center")}}><X size={11}/></button>
-            </div>)}
-            {!(cfg.vip_senders||[]).length&&<span style={{fontSize:12,color:T.textFaint}}>Aucun VIP configuré</span>}
-          </div>
-        </div>
-        <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,padding:20,marginBottom:16}}>
-          <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>Mots-clés prioritaires</div>
-          <div style={{fontSize:11,color:T.textSub,marginBottom:10}}>Si ces mots sont dans l'email → priorité "Haute" automatique</div>
-          <div style={{...fl(8),marginBottom:10}}>
-            <SI T={T} value={newKw} onChange={e=>setNewKw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addToList("priority_keywords",newKw,setNewKw)} placeholder="urgent, ASAP, deadline, contractuel..."/>
-            <Btn T={T} variant="secondary" onClick={()=>addToList("priority_keywords",newKw,setNewKw)} disabled={!newKw.trim()} style={{flexShrink:0}}>+</Btn>
-          </div>
-          <div style={{...fl(6),flexWrap:"wrap"}}>
-            {(cfg.priority_keywords||[]).map((k,i)=><div key={i} style={{...fl(6),padding:"4px 12px",background:AC.redDim,border:`1px solid ${AC.red}20`,borderRadius:20,fontSize:12,color:AC.red}}>
-              🔴 {k}<button onClick={()=>removeFromList("priority_keywords",i)} style={{background:"none",border:"none",cursor:"pointer",color:AC.red,marginLeft:4,...fl(0,"center","center")}}><X size={11}/></button>
-            </div>)}
-            {!(cfg.priority_keywords||[]).length&&<span style={{fontSize:12,color:T.textFaint}}>Aucun mot-clé configuré</span>}
-          </div>
-        </div>
-        <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,padding:20}}>
-          <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>Catégories personnalisées</div>
-          <div style={{fontSize:11,color:T.textSub,marginBottom:10}}>Ajoute tes propres catégories de classification en plus des 4 par défaut</div>
-          <div style={{...fl(8),marginBottom:10}}>
-            <SI T={T} value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addToList("custom_categories",newCat,setNewCat)} placeholder="Urgence, Formation, Facturation..."/>
-            <Btn T={T} variant="secondary" onClick={()=>addToList("custom_categories",newCat,setNewCat)} disabled={!newCat.trim()} style={{flexShrink:0}}>+</Btn>
-          </div>
-          <div style={{...fl(6),flexWrap:"wrap"}}>
-            {(cfg.custom_categories||[]).map((c,i)=><div key={i} style={{...fl(6),padding:"4px 12px",background:AC.violetDim,border:`1px solid ${AC.violet}20`,borderRadius:20,fontSize:12,color:AC.violet}}>
-              🏷️ {c}<button onClick={()=>removeFromList("custom_categories",i)} style={{background:"none",border:"none",cursor:"pointer",color:AC.violet,marginLeft:4,...fl(0,"center","center")}}><X size={11}/></button>
-            </div>)}
-            {!(cfg.custom_categories||[]).length&&<span style={{fontSize:12,color:T.textFaint}}>Aucune catégorie personnalisée</span>}
-          </div>
-        </div>
-      </div>}
-
-      {/* Tab: Avancé */}
-      {activeTab==="advanced"&&<div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,overflow:"hidden",marginBottom:20}}>
-        <RS label="Langue de sortie forcée" sub="Forcer une langue pour toutes les analyses (auto = langue de l'email)" ctrl={<Sel T={T} value={cfg.output_language||"auto"} onChange={v=>upd("output_language",v)} options={[["auto","Auto"],["fr","Français"],["en","English"],["es","Español"],["de","Deutsch"]]}/>}/>
-        <RS label={`Tokens classification max : ${cfg.max_tokens_classify||150}`} sub="Garder bas pour économiser le quota (150 = largement suffisant)" ctrl={<input type="range" min={80} max={300} step={10} value={cfg.max_tokens_classify||150} onChange={e=>upd("max_tokens_classify",Number(e.target.value))} style={{width:120,accentColor:AC.cyan}}/>}/>
-        <RS label={`Tokens rédaction max : ${cfg.max_tokens_draft||2000}`} ctrl={<input type="range" min={500} max={4000} step={100} value={cfg.max_tokens_draft||2000} onChange={e=>upd("max_tokens_draft",Number(e.target.value))} style={{width:120,accentColor:AC.violet}}/>}/>
-        <div style={{padding:"16px 18px"}}>
-          <div style={{...fl(6),padding:"12px 14px",background:AC.indigoDim,borderRadius:10,fontSize:12,color:AC.indigo}}>
-            <Sparkles size={13}/> <strong>Quota estimé :</strong> &nbsp;
-            {cfg.analysis_depth==="quick"?"~1 appel/email":cfg.analysis_depth==="deep"?"~3 appels/email":"~2 appels/email"}
-            &nbsp;· Max {cfg.analysis_depth==="quick"?14000:cfg.analysis_depth==="deep"?4666:7000} emails/jour au rythme actuel
-          </div>
-        </div>
-      </div>}
-    </div>
-  </div>
-}
-
-
-// ── Graphique tendances sentiments ───────────────────────────────────────────
 function SentimentTrendChart({T}) {
   const [trends,setTrends]=useState(null)
   useEffect(()=>{
@@ -1547,11 +1660,11 @@ function SentimentTrendChart({T}) {
   if(!trends) return <div style={{height:80,...fl(0,"center","center")}}><Spin size={20}/></div>
   const hasData=trends.some(d=>d.Positif+d.Neutre+d.Negatif+d.Urgent>0)
   if(!hasData) return <div style={{height:60,...fl(0,"center","center"),color:T.textFaint,fontSize:12}}>Données insuffisantes — les sentiments s'accumulent au fil des analyses</div>
-  const maxVal=Math.max(...trends.map(d=>d.Positif+d.Neutre+d.Negatif+d.Urgent),1)
+  const maxVal=Math.max(...(trends||[]).map(d=>d.Positif+d.Neutre+d.Negatif+d.Urgent),1)
   const COLS={Positif:AC.green,Neutre:"#64748B",Negatif:AC.orange,Urgent:AC.red}
   return <div style={{overflowX:"auto"}}>
     <div style={{display:"flex",gap:4,alignItems:"flex-end",height:80,minWidth:trends.length*32}}>
-      {trends.map((d,i)=>{
+      {(trends||[]).map((d,i)=>{
         const total=d.Positif+d.Neutre+d.Negatif+d.Urgent||0
         const heightPct=(t,max)=>total===0?0:Math.round(t/maxVal*100)
         return <div key={i} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,flex:1,minWidth:24}}>
@@ -1619,7 +1732,7 @@ function ContactsView({T,showToast}) {
         <Users size={48} style={{opacity:.2}}/><span>Aucun contact analysé</span>
       </div>}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        {contacts.map((c,i)=>(
+        {(contacts||[]).map((c,i)=>(
           <div key={c.email} className="card-hover" style={{background:T.bg2,border:`1px solid ${c.is_vip?AC.gold+"40":T.border}`,borderRadius:16,padding:18,...fl(14)}}>
             <div style={{width:48,height:48,borderRadius:15,background:senderColor(c.email),...fl(0,"center","center"),fontSize:16,fontWeight:900,color:"#fff",flexShrink:0,boxShadow:`0 4px 12px ${senderColor(c.email)}50`}}>
               {c.name?.[0]?.toUpperCase()||"?"}
@@ -1711,7 +1824,7 @@ function RulesView({T,showToast}) {
           {rules.length===0&&<div style={{...fl(0,"center","center"),flexDirection:"column",gap:8,padding:40,background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`,color:T.textFaint}}>
             <Sliders size={32} style={{opacity:.2}}/><span style={{fontSize:12}}>Aucune règle — crée la première !</span>
           </div>}
-          {rules.map(r=>(
+          {(rules||[]).map(r=>(
             <div key={r.id} style={{background:T.bg2,border:`1px solid ${r.enabled?T.border:T.textFaint+"20"}`,borderRadius:14,padding:16,opacity:r.enabled?1:0.5}}>
               <div style={{...fl(8),marginBottom:8}}>
                 <span style={{fontSize:13,fontWeight:700,flex:1,color:T.text}}>{r.name}</span>
@@ -1746,7 +1859,7 @@ function FollowUpsView({T,showToast}) {
       </div>
       {followups.length===0?<div style={{...fl(0,"center","center"),flexDirection:"column",gap:12,padding:60,background:T.bg2,borderRadius:16,border:`1px solid ${T.border}`,color:T.textFaint}}>
         <Check size={40} color={AC.green} style={{opacity:.5}}/><span style={{fontSize:14}}>Aucune relance en attente — tout est traité !</span>
-      </div>:followups.map(f=>(
+      </div>:(followups||[]).map(f=>(
         <div key={f.id} style={{background:T.bg2,border:`2px solid ${AC.orange}30`,borderRadius:16,padding:20,marginBottom:12,...fl(14)}}>
           <div style={{width:44,height:44,borderRadius:14,background:AC.orangeDim,...fl(0,"center","center"),flexShrink:0}}><Bell size={20} color={AC.orange}/></div>
           <div style={{flex:1,minWidth:0}}>
@@ -2037,6 +2150,306 @@ jobs:
   </div>
 }
 
+
+// ════════════════════════════════════════════════════════════
+// NOUVELLES VUES — Toutes gratuites
+// ════════════════════════════════════════════════════════════
+
+// ── 1. TasksView — Tâches extraites de l inbox ──────────────
+function TasksView({T,showToast}) {
+  const [tasks,setTasks]=useState(null),[loading,setLoading]=useState(false)
+  const cached = ()=>apiFetch(`${API}/emails/tasks/cached`).then(r=>r.json()).then(d=>{setTasks(d.tasks||[])})
+  useEffect(()=>{cached()},[])
+  const scan=async()=>{
+    setLoading(true);showToast("Scan des emails en cours (30-60s)...","info")
+    try{const d=await apiFetch(`${API}/emails/extract-tasks`).then(r=>r.json());setTasks(d.tasks||[]);showToast(`${d.count} tâches trouvées !`)}
+    catch(e){showToast("Erreur scan","err")}finally{setLoading(false)}
+  }
+  const done=async(i)=>{
+    await apiFetch(`${API}/emails/tasks/${i}/done`,{method:"POST"})
+    setTasks(p=>(p||[]).map((t,idx)=>idx===i?{...t,done:true}:t))
+  }
+  const del=async(i)=>{
+    await apiFetch(`${API}/emails/tasks/${i}`,{method:"DELETE"})
+    setTasks(p=>(p||[]).filter((_,idx)=>idx!==i))
+  }
+  const pColors={"haute":AC.red,"normale":AC.blue,"basse":AC.green}
+  const pending=(tasks||[]).filter(t=>!t.done)
+  const done_tasks=(tasks||[]).filter(t=>t.done)
+  return <div style={{flex:1,overflowY:"auto",padding:"32px 40px",color:T.text}}>
+    <div style={{maxWidth:800,margin:"0 auto"}}>
+      <div style={{...fl(14),marginBottom:28}}>
+        <div style={{width:52,height:52,borderRadius:16,background:AC.grad5,...fl(0,"center","center"),boxShadow:`0 4px 20px ${AC.orangeDim}`}}><CheckSquare size={24} color="#fff"/></div>
+        <div style={{flex:1}}><h2 style={{fontSize:26,fontWeight:900,letterSpacing:"-0.03em"}}>Tâches extraites</h2><p style={{color:T.textSub,fontSize:13,marginTop:3}}>L'IA scanne tes emails et extrait les actions à faire</p></div>
+        <Btn T={T} variant="primary" onClick={scan} disabled={loading} style={{padding:"10px 20px"}}>
+          {loading?<Spin size={13} color="#fff"/>:<Zap size={13}/>} {loading?"Scan...":"Scanner l'inbox"}
+        </Btn>
+      </div>
+      {tasks===null&&<div style={{...fl(0,"center","center"),flexDirection:"column",gap:12,padding:60,color:T.textFaint}}>
+        <CheckSquare size={48} style={{opacity:.2}}/><span>Clique sur "Scanner" pour détecter les tâches</span>
+      </div>}
+      {pending.length>0&&<>
+        <div style={{fontSize:11,fontWeight:800,color:T.textSub,marginBottom:12,letterSpacing:"0.06em",...fl(6)}}><Circle size={11}/> À FAIRE ({pending.length})</div>
+        {(tasks||[]).map((t,i)=>t.done?null:<div key={i} className="card-hover" style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:14,padding:"14px 18px",...fl(14),marginBottom:10}}>
+          <div style={{width:8,height:8,borderRadius:"50%",background:pColors[t.priority]||AC.blue,flexShrink:0,marginTop:4}}/>
+          <div style={{flex:1}}>
+            <div style={{fontSize:14,fontWeight:600,color:T.text,marginBottom:4}}>{t.action}</div>
+            <div style={{...fl(8),flexWrap:"wrap",gap:6}}>
+              {t.deadline&&<span style={{fontSize:11,color:AC.orange,...fl(4)}}><Calendar size={9}/> {t.deadline}</span>}
+              <span style={{fontSize:11,color:T.textFaint}}>📧 {t.email_subject?.slice(0,40)}</span>
+            </div>
+          </div>
+          <div style={{...fl(6)}}>
+            <IAB T={T} Icon={CheckSquare} title="Fait" onClick={()=>done(i)} style={{color:AC.green}}/>
+            <IAB T={T} Icon={X} danger onClick={()=>del(i)}/>
+          </div>
+        </div>)}
+      </>}
+      {done_tasks.length>0&&<div style={{marginTop:20,opacity:.5}}>
+        <div style={{fontSize:11,fontWeight:800,color:T.textFaint,marginBottom:8,letterSpacing:"0.06em",...fl(6)}}><CheckSquare size={11}/> TERMINÉES ({done_tasks.length})</div>
+        {(tasks||[]).map((t,i)=>!t.done?null:<div key={i} style={{background:T.bg3,borderRadius:12,padding:"10px 14px",...fl(10),marginBottom:6}}>
+          <span style={{fontSize:12,textDecoration:"line-through",color:T.textFaint}}>{t.action}</span>
+          <IAB T={T} Icon={Trash2} danger onClick={()=>del(i)} style={{marginLeft:"auto"}}/>
+        </div>)}
+      </div>}
+    </div>
+  </div>
+}
+
+// ── 2. BatchUnsubView — Désabonnement en masse ───────────────
+function BatchUnsubView({T,showToast}) {
+  const [newsletters,setNewsletters]=useState(null),[loading,setLoading]=useState(true)
+  const [archiving,setArchiving]=useState({})
+  useEffect(()=>{
+    apiFetch(`${API}/emails/newsletters`).then(r=>r.json()).then(d=>setNewsletters(d.newsletters||[])).catch(()=>setNewsletters([])).finally(()=>setLoading(false))
+  },[])
+  const archive=async(n,i)=>{
+    setArchiving(p=>({...p,[i]:true}))
+    try{
+      await apiFetch(`${API}/emails/batch-archive-newsletter?sender_email=${encodeURIComponent(n.email)}`,{method:"POST"})
+      showToast(`${n.count} emails de ${n.email.slice(0,30)} archivés !`)
+      setNewsletters(p=>(p||[]).filter((_,idx)=>idx!==i))
+    }catch{showToast("Erreur","err")}
+    finally{setArchiving(p=>({...p,[i]:false}))}
+  }
+  const openUnsub=(n)=>{
+    const link = n.unsubscribe_link
+    if(!link) return showToast("Pas de lien de désabonnement trouvé","warn")
+    const url = link.match(/https?:\/\/[^\s>]+/)?.[0]
+    if(url) window.open(url,"_blank")
+    else showToast("Lien non reconnu","warn")
+  }
+  if(loading) return <div style={{flex:1,...fl(0,"center","center")}}><Spin size={32}/></div>
+  return <div style={{flex:1,overflowY:"auto",padding:"32px 40px",color:T.text}}>
+    <div style={{maxWidth:820,margin:"0 auto"}}>
+      <div style={{...fl(14),marginBottom:28}}>
+        <div style={{width:52,height:52,borderRadius:16,background:"linear-gradient(135deg,#EF4444,#B91C1C)",...fl(0,"center","center")}}><MailX size={24} color="#fff"/></div>
+        <div><h2 style={{fontSize:26,fontWeight:900,letterSpacing:"-0.03em"}}>Newsletters & Listes</h2><p style={{color:T.textSub,fontSize:13,marginTop:3}}>Désabonne-toi et nettoie ta boite en un clic</p></div>
+      </div>
+      {(!newsletters||newsletters.length===0)?<div style={{...fl(0,"center","center"),flexDirection:"column",gap:12,padding:60,color:T.textFaint}}>
+        <MailX size={48} style={{opacity:.2}}/><span>Aucune newsletter détectée dans les 30 derniers jours</span>
+      </div>:<>
+        <div style={{padding:"10px 16px",background:AC.blueDim,borderRadius:12,marginBottom:20,fontSize:12,color:AC.blue,...fl(8)}}>
+          <Info size={13}/> {newsletters.length} expéditeurs détectés — Archive pour masquer, Désabonne pour ne plus recevoir
+        </div>
+        {(newsletters||[]).map((n,i)=>(
+          <div key={i} className="card-hover" style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:14,padding:"14px 18px",...fl(14),marginBottom:10}}>
+            <div style={{width:42,height:42,borderRadius:13,background:senderColor(n.email),...fl(0,"center","center"),fontSize:15,fontWeight:800,color:"#fff",flexShrink:0}}>{n.email[0]?.toUpperCase()}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n.sender?.split("<")[0]?.trim()||n.email}</div>
+              <div style={{fontSize:11,color:T.textFaint,marginTop:2}}>{n.email} · {n.count} email{n.count>1?"s":""}</div>
+            </div>
+            <div style={{...fl(8),flexShrink:0}}>
+              {n.unsubscribe_link&&<Btn T={T} variant="secondary" onClick={()=>openUnsub(n)} style={{fontSize:11,padding:"6px 12px"}}><ExternalLink size={10}/> Se désabonner</Btn>}
+              <Btn T={T} variant="ghost" onClick={()=>archive(n,i)} disabled={archiving[i]} style={{fontSize:11,padding:"6px 12px",color:AC.orange,borderColor:AC.orange+"30"}}>
+                {archiving[i]?<Spin size={11} color={AC.orange}/>:<Archive size={10}/>} Archiver tout
+              </Btn>
+            </div>
+          </div>
+        ))}
+      </>}
+    </div>
+  </div>
+}
+
+// ── 3. CalendarView — Emails avec événements ─────────────────
+function CalendarView({T,showToast}) {
+  const [events,setEvents]=useState(null),[loading,setLoading]=useState(true),[selected,setSelected]=useState(null)
+  useEffect(()=>{
+    // Chercher les emails avec des dates dans le sujet ou corps
+    apiFetch(`${API}/emails?q=is:inbox+has:&max_results=30`).then(r=>r.json()).then(async d=>{
+      const emails = d.emails||[]
+      const evts = []
+      for(const e of emails.slice(0,20)){
+        try{
+          const ev = await apiFetch(`${API}/emails/${e.id}/calendar-event`).then(r=>r.json())
+          if(ev.has_event) evts.push({...ev,email_id:e.id,email_subject:e.subject,email_from:e.from})
+        }catch{}
+        await new Promise(r=>setTimeout(r,200))
+      }
+      setEvents(evts)
+    }).catch(()=>setEvents([])).finally(()=>setLoading(false))
+  },[])
+  if(loading) return <div style={{flex:1,...fl(0,"center","center"),flexDirection:"column",gap:12}}><Spin size={32}/><span style={{color:T.textFaint,fontSize:13}}>Détection des événements...</span></div>
+  return <div style={{flex:1,overflowY:"auto",padding:"32px 40px",color:T.text}}>
+    <div style={{maxWidth:800,margin:"0 auto"}}>
+      <div style={{...fl(14),marginBottom:28}}>
+        <div style={{width:52,height:52,borderRadius:16,background:AC.grad1,...fl(0,"center","center"),boxShadow:`0 4px 20px ${AC.blueGlow}`}}><Calendar size={24} color="#fff"/></div>
+        <div><h2 style={{fontSize:26,fontWeight:900,letterSpacing:"-0.03em"}}>Calendrier</h2><p style={{color:T.textSub,fontSize:13,marginTop:3}}>Événements et réunions détectés dans tes emails</p></div>
+      </div>
+      {(!events||events.length===0)?<div style={{...fl(0,"center","center"),flexDirection:"column",gap:12,padding:60,color:T.textFaint}}>
+        <Calendar size={48} style={{opacity:.2}}/><span>Aucun événement détecté</span>
+      </div>:<div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {(events||[]).map((ev,i)=><div key={i} className="card-hover" onClick={()=>setSelected(selected===i?null:i)} style={{background:T.bg2,border:`1px solid ${selected===i?AC.blue:T.border}`,borderRadius:16,padding:"18px 22px",cursor:"pointer"}}>
+          <div style={{...fl(14)}}>
+            <div style={{width:48,height:48,borderRadius:14,background:AC.grad1,...fl(0,"center","center"),flexShrink:0}}>
+              <Calendar size={20} color="#fff"/>
+            </div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>{ev.title||ev.email_subject}</div>
+              <div style={{...fl(10),flexWrap:"wrap",gap:8}}>
+                {ev.date&&<span style={{fontSize:12,color:AC.blue,...fl(4)}}><Calendar size={10}/>{ev.date}</span>}
+                {ev.time&&<span style={{fontSize:12,color:AC.violet,...fl(4)}}><Clock size={10}/>{ev.time}</span>}
+                {ev.location&&<span style={{fontSize:12,color:AC.green,...fl(4)}}><MapPin size={10}/>{ev.location}</span>}
+                {ev.duration&&<span style={{fontSize:12,color:T.textSub,...fl(4)}}><Timer size={10}/>{ev.duration}</span>}
+              </div>
+            </div>
+          </div>
+          {selected===i&&ev.description&&<div style={{marginTop:12,padding:"10px 14px",background:T.bg3,borderRadius:10,fontSize:12,color:T.textSub,lineHeight:1.6}}>{ev.description}</div>}
+          {selected===i&&ev.participants?.length>0&&<div style={{marginTop:8,fontSize:11,color:T.textFaint}}>👥 {ev.participants.join(", ")}</div>}
+        </div>)}
+      </div>}
+    </div>
+  </div>
+}
+
+// ── 4. AIHistoryView — Historique des analyses ───────────────
+function AIHistoryView({T}) {
+  const [history,setHistory]=useState(null),[loading,setLoading]=useState(true)
+  useEffect(()=>{
+    apiFetch(`${API}/ai-history`).then(r=>r.json()).then(d=>setHistory(d.history||[])).catch(()=>setHistory([])).finally(()=>setLoading(false))
+  },[])
+  if(loading) return <div style={{flex:1,...fl(0,"center","center")}}><Spin size={32}/></div>
+  const sentColors={"Positif":AC.green,"Neutre":"#64748B","Negatif":AC.orange,"Urgent":AC.red}
+  return <div style={{flex:1,overflowY:"auto",padding:"32px 40px",color:T.text}}>
+    <div style={{maxWidth:820,margin:"0 auto"}}>
+      <div style={{...fl(14),marginBottom:28}}>
+        <div style={{width:52,height:52,borderRadius:16,background:AC.grad2,...fl(0,"center","center")}}><History size={24} color="#fff"/></div>
+        <div><h2 style={{fontSize:26,fontWeight:900,letterSpacing:"-0.03em"}}>Historique IA</h2><p style={{color:T.textSub,fontSize:13,marginTop:3}}>Toutes tes analyses sauvegardées — zéro re-consommation de quota</p></div>
+      </div>
+      {(!history||history.length===0)?<div style={{...fl(0,"center","center"),flexDirection:"column",gap:12,padding:60,color:T.textFaint}}>
+        <History size={48} style={{opacity:.2}}/><span>Aucune analyse enregistrée — analyse un email pour commencer</span>
+      </div>:<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        {(history||[]).map((h,i)=><div key={i} className="card-hover" style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:14,padding:"14px 18px"}}>
+          <div style={{...fl(8),marginBottom:8,flexWrap:"wrap"}}>
+            <CatBadge cat={h.category} T={T}/>
+            {h.priority&&<Chip label={h.priority} color={h.priority==="Haute"?AC.red:h.priority==="Normale"?AC.blue:AC.green} T={T}/>}
+            {h.sentiment&&<span style={{fontSize:10,fontWeight:700,color:sentColors[h.sentiment]||T.textFaint,padding:"2px 7px",borderRadius:9,background:`${sentColors[h.sentiment]||T.textFaint}15`}}>{h.sentiment}</span>}
+          </div>
+          <p style={{fontSize:12,color:T.textSub,lineHeight:1.6,margin:0}}>{h.summary||"Analyse disponible"}</p>
+          {h.analyzed_at&&<div style={{fontSize:10,color:T.textFaint,marginTop:6}}>{new Date(h.analyzed_at*1000).toLocaleDateString("fr-FR")}</div>}
+        </div>)}
+      </div>}
+    </div>
+  </div>
+}
+
+// ── 5. ToneBar — Analyse de ton en temps réel ────────────────
+function ToneBar({T,text}) {
+  const [tone,setTone]=useState(null),[loading,setLoading]=useState(false)
+  useEffect(()=>{
+    if(!text||text.length<20){setTone(null);return}
+    const timer=setTimeout(async()=>{
+      setLoading(true)
+      try{
+        const d=await apiFetch(`${API}/emails/analyze-tone`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})}).then(r=>r.json())
+        setTone(d)
+      }catch{}finally{setLoading(false)}
+    },1500) // Debounce 1.5s
+    return()=>clearTimeout(timer)
+  },[text])
+  if(!text||text.length<20) return null
+  const toneColors={"professionnel":AC.blue,"amical":AC.green,"agressif":AC.red,"urgent":AC.orange,"neutre":"#64748B","formel":AC.indigo}
+  const tc=toneColors[tone?.tone]||T.textFaint
+  return <div style={{padding:"8px 14px",background:T.bg3,borderRadius:10,marginTop:8,...fl(10),flexWrap:"wrap",gap:8}}>
+    {loading&&<><Spin size={11} color={T.textFaint}/><span style={{fontSize:11,color:T.textFaint}}>Analyse du ton...</span></>}
+    {tone&&!loading&&<>
+      <span style={{fontSize:11,fontWeight:700,color:tc,padding:"2px 8px",background:`${tc}15`,borderRadius:8}}>{tone.tone}</span>
+      <span style={{fontSize:11,color:T.textFaint}}>Score: {tone.score}/100</span>
+      {tone.is_too_long&&<span style={{fontSize:11,color:AC.orange}}>⚠ Trop long</span>}
+      {tone.reading_time_seconds&&<span style={{fontSize:11,color:T.textFaint}}>⏱ {tone.reading_time_seconds}s de lecture</span>}
+      {(tone.suggestions||[]).slice(0,1).map((s,i)=><span key={i} style={{fontSize:11,color:T.textSub,fontStyle:"italic"}}>💡 {s}</span>)}
+    </>}
+  </div>
+}
+
+// ── 6. BestTimeIndicator — Meilleur moment d envoi ───────────
+function BestTimeIndicator({T}) {
+  const [data,setData]=useState(null)
+  useEffect(()=>{
+    cachedFetch(`${API}/emails/best-send-time`,600000).then(setData).catch(()=>{})
+  },[])
+  if(!data) return null
+  const now=new Date()
+  const isGoodTime=Math.abs(now.getHours()-data.best_hour)<=2&&now.getDay()===data.best_day_idx
+  return <div style={{...fl(6),padding:"6px 12px",background:isGoodTime?AC.greenDim:T.bg3,border:`1px solid ${isGoodTime?AC.green+"30":T.border}`,borderRadius:9,fontSize:11,color:isGoodTime?AC.green:T.textFaint}}>
+    {isGoodTime?"✓ Bon moment d'envoyer":"🕐 Meilleur: "+data.best_day+" "+data.best_hour_label}
+  </div>
+}
+
+// ── 7. SignaturePicker — Signatures multiples ────────────────
+function SignaturePicker({T,onSelect}) {
+  const profile = JSON.parse(localStorage.getItem("emailai_profile")||"{}")
+  const signatures = [
+    {label:"Complète",text:profile.signature||""},
+    {label:"Courte",text:(profile.name||"")+"\n"+(profile.title||"")},
+    {label:"Sans signature",text:""},
+  ].filter(s=>s.text!==undefined)
+  const [open,setOpen]=useState(false)
+  return <div style={{position:"relative"}}>
+    <button onClick={()=>setOpen(p=>!p)} style={{...fl(4),padding:"5px 10px",background:T.bg3,border:`1px solid ${T.border}`,borderRadius:8,color:T.textSub,cursor:"pointer",fontFamily:"inherit",fontSize:11}}>
+      ✍ Signature <ChevronDown size={10}/>
+    </button>
+    {open&&<div style={{position:"absolute",bottom:"100%",left:0,background:T.bg2,border:`1px solid ${T.border}`,borderRadius:12,padding:8,zIndex:50,minWidth:160,boxShadow:"0 8px 32px rgba(0,0,0,0.4)"}}>
+      {signatures.map((s,i)=><button key={i} onClick={()=>{onSelect(s.text);setOpen(false)}} style={{display:"block",width:"100%",padding:"8px 12px",background:"none",border:"none",color:T.text,cursor:"pointer",textAlign:"left",fontFamily:"inherit",fontSize:12,borderRadius:8}}>
+        {s.label}
+      </button>)}
+    </div>}
+  </div>
+}
+
+// ── 8. NotificationSetup — Notifications push navigateur ─────
+function NotificationSetup({T,showToast}) {
+  const [perm,setPerm]=useState(()=>typeof Notification!=="undefined"?Notification.permission:"denied")
+  const enable=async()=>{
+    if(!("Notification" in window)){showToast("Navigateur non supporté","warn");return}
+    const result=await Notification.requestPermission()
+    setPerm(result)
+    if(result==="granted") showToast("Notifications activées ! Tu seras alerté des emails VIP.")
+    else showToast("Notifications refusées","warn")
+  }
+  const test=()=>{
+    if(perm!=="granted"){showToast("Active d'abord les notifications","warn");return}
+    new Notification("EmailAI",{body:"Test — Tu recevras des alertes comme celle-ci !",icon:"/mail.github.io/favicon.ico"})
+  }
+  return <div style={{background:T.bg2,border:`1px solid ${T.border}`,borderRadius:16,padding:22,marginBottom:16}}>
+    <div style={{...fl(10),marginBottom:14}}>
+      <div style={{width:38,height:38,borderRadius:11,background:perm==="granted"?AC.greenDim:T.bg4,...fl(0,"center","center")}}><Bell size={17} color={perm==="granted"?AC.green:T.textFaint}/></div>
+      <div style={{flex:1}}>
+        <div style={{fontSize:14,fontWeight:700}}>Notifications navigateur</div>
+        <div style={{fontSize:12,color:T.textSub,marginTop:2}}>Alertes pour les emails VIP même onglet en arrière-plan</div>
+      </div>
+      <span style={{padding:"3px 10px",borderRadius:20,fontSize:11,fontWeight:700,background:perm==="granted"?AC.greenDim:T.bg4,color:perm==="granted"?AC.green:T.textFaint}}>
+        {perm==="granted"?"Actif":perm==="denied"?"Bloqué":"En attente"}
+      </span>
+    </div>
+    <div style={{...fl(8)}}>
+      {perm!=="granted"&&<Btn T={T} variant="primary" onClick={enable} style={{flex:1,fontSize:12}}><Bell size={12}/> Activer</Btn>}
+      {perm==="granted"&&<Btn T={T} variant="ghost" onClick={test} style={{fontSize:12,padding:"7px 14px"}}><Bell size={12}/> Tester</Btn>}
+    </div>
+  </div>
+}
+
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [settings,setSettings]=useState(()=>ld("emailai_settings",DEFAULT_SETTINGS))
@@ -2054,11 +2467,18 @@ export default function App() {
   const [undoAction,setUndoAction]=useState(null)
   const [showShortcuts,setShowShortcuts]=useState(false)
   const [showAdvSearch,setShowAdvSearch]=useState(false)
+  // Précharger l'email suivant pour navigation fluide
+  useEmailPreload(emails, selected?.id)
   const [zenMode,setZenMode]=useState(false)
-  const [showTokenModal,setShowTokenModal]=useState(!getApiToken())
+      const [showTokenModal,setShowTokenModal]=useState(!getApiToken())
   const [fontSize,setFontSize]=useState(()=>parseInt(localStorage.getItem("emailai_fontsize")||"14"))
 
-  const showToast=(msg,type="ok")=>{setToast({msg,type});setTimeout(()=>setToast(null),2500)}
+  const showToast=(msg,type="ok")=>{
+    const t=type==="err"||type==="error"?"err":type==="warn"?"warn":type==="info"?"info":"success"
+    setToast({msg,type:t})
+    const dur=t==="err"?5000:t==="warn"?4000:3000
+    setTimeout(()=>setToast(null),dur)
+  }
   const TABS=[
     {id:"inbox", label:"Inbox",   q:"is:inbox",  Icon:Inbox},
     {id:"unread",label:"Non lus", q:"is:unread", Icon:Mail},
@@ -2085,6 +2505,9 @@ export default function App() {
       if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT") return
       if(e.key==="?"||e.key=="/") setShowShortcuts(p=>!p)
       if(e.key==="Escape") { setShowShortcuts(false); setUndoAction(null); setZenMode(false) }
+      if(e.key==="?"||e.key==="/") setShowShortcuts(p=>!p)
+      if(e.key==="z"&&!e.ctrlKey) setZenMode(p=>!p)
+      if(e.ctrlKey&&e.key==="z"&&undoAction) { undoAction.fn(); setUndoAction(null) }
       if(e.key==="z"&&!e.ctrlKey&&!e.metaKey&&!e.altKey) setZenMode(p=>!p)
       if(!selected) return
       if(e.key==="e"||e.key==="E") doAction(selected,"archive")
@@ -2198,7 +2621,9 @@ export default function App() {
   if(!ready) return <div style={{height:"100vh",...fl(0,"center","center"),background:"#080C18"}}><Spin size={40}/></div>
   if(!auth) return <AuthScreen T={T}/>
 
-  return <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',system-ui,sans-serif",background:T.bg,overflow:"hidden",color:T.text}}>
+  return <ErrorBoundary theme={T}>
+    <GlobalStyles/>
+    <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',system-ui,sans-serif",background:T.bg,overflow:"hidden",color:T.text}}>
     <GS T={T}/>
     <div style={{width:zenMode?0:collapsed?60:220,display:"flex",flexDirection:"column",flexShrink:0,background:T.sidebar,transition:"width .28s cubic-bezier(.4,0,.2,1)",overflow:"hidden",position:"relative"}} className="sidebar-glow">
       <div style={{padding:"16px 12px 12px",borderBottom:`1px solid ${T.sidebarBorder}`,...fl(10)}}>
@@ -2235,6 +2660,12 @@ export default function App() {
         <NB T={T} Icon={Users}      label="Contacts fréquents"  active={view==="contacts"}   onClick={()=>setView("contacts")}  color={AC.cyan}/>
         <NB T={T} Icon={Sliders}    label="Règles auto"         active={view==="rules"}      onClick={()=>setView("rules")}     color={AC.orange}/>
         <NB T={T} Icon={Bell}       label="Relances"            active={view==="followups"}  onClick={()=>setView("followups")} color={AC.orange}/>
+        <NB T={T} Icon={CheckSquare} label="Tâches IA"          active={view==="tasks"}      onClick={()=>setView("tasks")}     color={AC.green}/>
+        <NB T={T} Icon={MailX}       label="Newsletters"        active={view==="newsletters"} onClick={()=>setView("newsletters")} color={AC.red}/>
+        <ND T={T}/>
+        <NL T={T}>ANALYSES</NL>
+        <NB T={T} Icon={History}     label="Historique IA"      active={view==="aihistory"}  onClick={()=>setView("aihistory")} color={AC.indigo}/>
+        <NB T={T} Icon={Calendar}    label="Calendrier"         active={view==="calendar"}   onClick={()=>setView("calendar")}  color={AC.blue}/>
         <NB T={T} Icon={Download}   label="Export / Import"     active={view==="export"}     onClick={()=>setView("export")}    color={AC.green}/>
         <ND T={T}/>
         <NL T={T}>DÉPLOIEMENT</NL>
@@ -2270,6 +2701,9 @@ export default function App() {
     :view==="aiconfig"  ?<AIConfigView   T={T} showToast={showToast}/>
     :view==="stats"     ?<StatsView      T={T}/>
     :view==="compose"   ?<ComposeView    T={T} settings={settings} profile={profile} showToast={showToast}/>
+    :view==="aiconfig"  ?<AIConfigView  T={T} showToast={showToast}/>
+    :view==="aiconfig"  ?<AIConfigView  T={T} showToast={showToast}/>
+    :view==="aiconfig"  ?<AIConfigView  T={T} showToast={showToast}/>
     :view==="autoreply" ?<AutoReplyView  T={T} showToast={showToast}/>
     :view==="digest"    ?<DigestView     T={T}/>
     :view==="wordfilter"?<WordFilterView T={T} showToast={showToast}/>
@@ -2279,6 +2713,14 @@ export default function App() {
     :view==="weekly"   ?<WeeklyReportView T={T}/>
     :view==="export"   ?<ExportView     T={T} showToast={showToast}/>
     :view==="github"   ?<GitHubView     T={T} showToast={showToast}/>
+    :view==="tasks"    ?<TasksView      T={T} showToast={showToast}/>
+    :view==="newsletters"?<BatchUnsubView T={T} showToast={showToast}/>
+    :view==="calendar" ?<CalendarView   T={T} showToast={showToast}/>
+    :view==="aihistory"?<AIHistoryView  T={T}/>
+    :view==="tasks"    ?<TasksView      T={T} showToast={showToast}/>
+    :view==="newsletters"?<BatchUnsubView T={T} showToast={showToast}/>
+    :view==="calendar" ?<CalendarView   T={T} showToast={showToast}/>
+    :view==="aihistory"?<AIHistoryView  T={T}/>
     :view==="github"   ?<GitHubView     T={T} showToast={showToast}/>
     :view==="templates" ?<TemplatesView  T={T} showToast={showToast}/>
     :(
@@ -2328,10 +2770,11 @@ export default function App() {
       <button onClick={()=>setFontSize(p=>Math.min(p+1,20))} title="Agrandir police (A+)" style={{width:28,height:28,borderRadius:8,border:`1px solid ${T.border}`,background:T.bg2,color:T.textSub,cursor:"pointer",fontSize:13,fontWeight:800,backdropFilter:"blur(8px)"}}>A+</button>
       <button onClick={()=>setZenMode(p=>!p)} title={zenMode?"Quitter le mode Zen (Z)":"Mode Zen - Focus (Z)"} style={{width:32,height:28,borderRadius:8,border:`1px solid ${zenMode?AC.violet:T.border}`,background:zenMode?AC.violetDim:T.bg2,color:zenMode?AC.violet:T.textSub,cursor:"pointer",fontSize:14,backdropFilter:"blur(8px)"}}>🧘</button>
     </div>
+    {undoAction&&<UndoBar T={T} action={undoAction} onUndo={()=>{undoAction.fn&&undoAction.fn();setUndoAction(null)}} onDismiss={()=>setUndoAction(null)}/>}
+    {showShortcuts&&<ShortcutsModal T={T} onClose={()=>setShowShortcuts(false)}/>}
     <Toast toast={toast}/>
     <BulkBar T={T} selectedIds={selectedIds} setSelectedIds={setSelectedIds} doAction={doAction} showToast={showToast}/>
-    {undoAction&&<UndoBar T={T} action={undoAction} onUndo={handleUndo} onDismiss={()=>setUndoAction(null)}/>}
-    {showTokenModal&&<TokenSetupModal T={T} onSave={(t)=>{if(t)setApiToken(t);setShowTokenModal(false)}}/>}
     {showShortcuts&&<ShortcutsModal T={T} onClose={()=>setShowShortcuts(false)}/>}
   </div>
+  </ErrorBoundary>
 }

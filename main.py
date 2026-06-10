@@ -277,7 +277,8 @@ Les mots suivants sont STRICTEMENT INTERDITS dans ta reponse : {words_to_avoid}
                     {"role": "user",      "content": f"Ta reponse contient les mots interdits: {words_to_avoid}. Reecris-la completement sans ces mots."},
                 ],
                 max_tokens=max_tokens,
-                temperature=min(temperature + 0.1 * attempt, 0.9),  # augmente creativite
+                temperature=min(temperature + 0.1 * attempt, 0.9),  # augmente creativite,
+                timeout=30,
             )
             current_draft = r.choices[0].message.content.strip()
         except Exception as e:
@@ -420,6 +421,44 @@ class _AuthMW(BaseHTTPMiddleware):
         return _add_cors_headers(response, origin)
 
 app.add_middleware(_AuthMW)
+# ── Middleware Headers de Sécurité HTTP ──────────────────────────────────────
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Ajoute les headers de sécurité OWASP sur toutes les réponses."""
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        # Empêcher le sniffing de MIME type
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        # Empêcher le clickjacking
+        response.headers["X-Frame-Options"] = "DENY"
+        # Forcer HTTPS
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # Empêcher XSS dans les anciens navigateurs
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        # Contrôle du referrer
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        # Permissions API navigateur
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        # CSP restrictif (API JSON only)
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+# ── Middleware limite taille des requêtes ─────────────────────────────────────
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Limite la taille des requêtes à 1 MB pour éviter les attaques DoS."""
+    MAX_SIZE = 1 * 1024 * 1024  # 1 MB
+    async def dispatch(self, request, call_next):
+        if request.method in ("POST", "PUT", "PATCH"):
+            content_length = request.headers.get("content-length")
+            if content_length and int(content_length) > self.MAX_SIZE:
+                return _JSONResponse({"detail": "Requête trop volumineuse (max 1 MB)"}, status_code=413)
+        return await call_next(request)
+
+app.add_middleware(RequestSizeLimitMiddleware)
+
+
+
+
 
 def get_creds():
     # RENDER: token peut venir de la variable d'env GMAIL_TOKEN
@@ -517,7 +556,7 @@ def call_groq(system, user, temperature=0.4, max_tokens=1500):
     r = client.chat.completions.create(
         model=GROQ_MODEL,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-        max_tokens=max_tokens, temperature=temperature)
+        max_tokens=max_tokens, temperature=temperature, timeout=30)
     return r.choices[0].message.content.strip()
 
 def build_system(settings, profile):
@@ -575,6 +614,7 @@ def call_groq_configured(system: str, user: str, cfg: dict) -> str:
         messages=[{"role":"system","content":system},{"role":"user","content":user}],
         max_tokens=min(max_tokens, 4096),
         temperature=max(0.0, min(1.0, temperature)),
+                timeout=30,
     )
     return r.choices[0].message.content.strip()
 
@@ -766,6 +806,7 @@ JSON UNIQUEMENT: {{"category":"...", "confidence":0.0-1.0, "reason":"..."}}"""
             messages=[{"role":"system","content":system},{"role":"user","content":user}],
             max_tokens=cfg.get("max_tokens_classify", 150),
             temperature=cfg.get("temperature_classify", 0.1),
+                timeout=30,
         )
         raw = r.choices[0].message.content.strip()
         match = re.search(r"[{][^}]*[}]", raw)
@@ -967,6 +1008,109 @@ def auth_login():
 
 
 # SECURITE: validation email_id
+
+# ── Sanitisation des entrées (anti-DoS, anti-injection) ──────────────────────
+_MAX_QUERY_LEN   = 500
+_MAX_BODY_LEN    = 10000
+_MAX_SUBJECT_LEN = 200
+_MAX_GENERIC_LEN = 1000
+
+
+# ── Rate limiting simple par IP ───────────────────────────────────────────────
+import time as _time
+from collections import defaultdict as _defaultdict
+
+_ip_requests = _defaultdict(list)
+_MAX_REQUESTS_PER_MINUTE = 60
+_MAX_AI_REQUESTS_PER_MINUTE = 20
+
+def check_rate_limit(request, limit: int = _MAX_REQUESTS_PER_MINUTE, window: int = 60):
+    """Vérifie le rate limit par IP."""
+    ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    window_start = now - window
+    # Nettoyer les vieilles requêtes
+    _ip_requests[ip] = [t for t in _ip_requests[ip] if t > window_start]
+    if len(_ip_requests[ip]) >= limit:
+        raise HTTPException(429, f"Trop de requêtes. Limite: {limit}/min.")
+    _ip_requests[ip].append(now)
+
+
+
+import re as _re_email
+_EMAIL_RE = _re_email.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
+
+def validate_email_addr(email: str, field: str = "email") -> str:
+    """Valide qu'une adresse email est syntaxiquement correcte."""
+    email = email.strip()[:254]  # RFC 5321 max length
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(400, f"{field} invalide: {email[:50]!r}")
+    return email
+
+
+# ── Protection bruteforce sur /auth/login ────────────────────────────────────
+_auth_attempts = {}
+_MAX_AUTH_ATTEMPTS = 5
+_AUTH_LOCKOUT_S = 300  # 5 minutes
+
+def check_auth_bruteforce(ip: str):
+    """Bloque les IPs après 5 tentatives échouées en 5 minutes."""
+    now = time.time()
+    attempts = _auth_attempts.get(ip, [])
+    # Nettoyer les anciennes tentatives
+    attempts = [t for t in attempts if now - t < _AUTH_LOCKOUT_S]
+    if len(attempts) >= _MAX_AUTH_ATTEMPTS:
+        remaining = int(_AUTH_LOCKOUT_S - (now - attempts[0]))
+        raise HTTPException(429, f"Trop de tentatives. Réessaie dans {remaining}s.")
+    _auth_attempts[ip] = attempts
+
+def record_auth_failure(ip: str):
+    now = time.time()
+    _auth_attempts.setdefault(ip, []).append(now)
+
+def reset_auth_attempts(ip: str):
+    _auth_attempts.pop(ip, None)
+
+def check_ssrf(url: str) -> bool:
+    """Vérifie qu'une URL ne pointe pas vers une ressource interne (anti-SSRF)."""
+    import ipaddress as _ip, urllib.parse as _up
+    try:
+        parsed = _up.urlparse(url)
+        hostname = parsed.hostname or ""
+        # Bloquer les IPs privées
+        addr = _ip.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            return False
+    except ValueError:
+        # C'est un hostname, pas une IP — OK
+        pass
+    # Bloquer les protocols dangereux
+    if parsed.scheme not in ("http", "https"):
+        return False
+    return True
+
+def sanitize_str(value: str, max_len: int = _MAX_GENERIC_LEN, name: str = "champ") -> str:
+    """Borne et nettoie une chaîne entrante."""
+    if not isinstance(value, str):
+        return ""
+    # Supprimer les caractères de contrôle dangereux
+    import unicodedata
+    cleaned = "".join(c for c in value if unicodedata.category(c)[0] != "C" or c in "\n\t\r")
+    if len(cleaned) > max_len:
+        raise HTTPException(400, f"{name} trop long (max {max_len} caractères)")
+    return cleaned.strip()
+
+def sanitize_query(q: str) -> str:
+    """Sanitise une requête de recherche Gmail."""
+    q = sanitize_str(q, _MAX_QUERY_LEN, "requête")
+    # Blacklist de patterns dangereux dans les requêtes Gmail
+    import re as _re
+    dangerous = [r"\.\./", r"<script", r"javascript:", r"data:"]
+    for p in dangerous:
+        if _re.search(p, q, _re.I):
+            raise HTTPException(400, "Requête invalide")
+    return q
+
 import re as _re_sec
 _EMAIL_ID_PATTERN = _re_sec.compile(r"^[a-zA-Z0-9_\-]{1,200}$")
 
@@ -995,8 +1139,8 @@ def auth_logout():
 # ── Emails ────────────────────────────────────────────────────────────────────
 @app.get("/emails")
 def list_emails(q: str = "is:inbox", max_results: int = 30, category: str = None):
-    # SECURITE: borner max_results
-    max_results = max(1, min(max_results, 50))
+    q = sanitize_query(q)
+    max_results = max(1, min(int(max_results), 50))
     gmail = get_gmail()
     # Filtrer par categorie si demande
     if category and category in MAIN_CATEGORIES:
@@ -1160,8 +1304,9 @@ class AIConfig(BaseModel):
     vip_senders: list = []
 
 @app.post("/emails/{email_id}/summary")
-def summarize_email(email_id: str, req: AnalyzeRequest = None):
+def summarize_email(email_id: str, req: AnalyzeRequest = None, request: Request = None):
     email_id = validate_email_id(email_id)
+    if request: check_rate_limit(request, _MAX_AI_REQUESTS_PER_MINUTE)
     req = req or AnalyzeRequest()
     result = _do_analyze(email_id, req.settings, req.profile)
     with analysis_lock:
@@ -1174,8 +1319,9 @@ class DraftRequest(BaseModel):
     settings: dict = {}; profile: dict = {}
 
 @app.post("/emails/{email_id}/draft-reply")
-def draft_reply(email_id: str, req: DraftRequest):
+def draft_reply(email_id: str, req: DraftRequest, request: Request = None):
     email_id = validate_email_id(email_id)
+    if request: check_rate_limit(request, _MAX_AI_REQUESTS_PER_MINUTE)
     email = get_email(email_id)
     body = email.get("body", email.get("snippet", ""))
     inj, msg = check_injection(req.instruction)
@@ -1236,6 +1382,7 @@ Reponds UNIQUEMENT avec le texte de l'email."""
 
 @app.post("/emails/{email_id}/variants")
 def variants(email_id: str, req: DraftRequest):
+    email_id = validate_email_id(email_id)
     email = get_email(email_id)
     body = email.get("body", "")[:2000]
     inj, _ = check_injection(req.instruction)
@@ -1251,10 +1398,15 @@ def variants(email_id: str, req: DraftRequest):
 
 # ── Compose ───────────────────────────────────────────────────────────────────
 class ComposeRequest(BaseModel):
-    instruction: str; recipient: str = ""; tone: str = "auto"; settings: dict = {}; profile: dict = {}
+    instruction: str = ""
+    recipient: str = ""
+    tone: str = "auto"
+    settings: dict = {}
+    profile: dict = {}
 
 @app.post("/compose")
 def compose(req: ComposeRequest):
+    req.instruction = sanitize_str(req.instruction, 2000, "instruction")
     inj, msg = check_injection(req.instruction)
     if inj: raise HTTPException(400, f"Bloque: {msg}")
     lang_map = {"fr":"francais","en":"anglais","es":"espagnol","de":"allemand","it":"italien"}
@@ -1278,6 +1430,7 @@ class TranslateRequest(BaseModel):
 
 @app.post("/translate")
 def translate(req: TranslateRequest):
+    if hasattr(req, 'text'): req.text = sanitize_str(req.text, 5000, 'texte')
     langs = {"fr":"francais","en":"anglais","es":"espagnol","de":"allemand","it":"italien","pt":"portugais","nl":"neerlandais","ja":"japonais","zh":"chinois"}
     system = "Tu es un traducteur. Traduis fidelement sans rien ajouter."
     user = f"Traduis en {langs.get(req.target_lang,'francais')}:\n{req.text[:4000]}"
@@ -1335,6 +1488,7 @@ class SendRequest(BaseModel):
 
 @app.post("/emails/send")
 def send_email(req: SendRequest):
+    req.to = validate_email_addr(req.to, "destinataire")
     inj, msg = check_injection(req.body)
     if inj: raise HTTPException(400, f"Bloque: {msg}")
     if not re.match(r"[^@]+@[^@]+\.[^@]+", req.to.strip()):
@@ -1448,6 +1602,7 @@ class QuickReplyRequest(BaseModel):
 
 @app.post("/emails/{email_id}/quick-reply")
 def quick_reply(email_id: str, req: QuickReplyRequest):
+    email_id = validate_email_id(email_id)
     inj, msg = check_injection(req.body)
     if inj: raise HTTPException(400, f"Bloque: {msg}")
     email = get_email(email_id)
@@ -1534,6 +1689,7 @@ def suggest_subject(req: SubjectSuggestRequest):
 # ── Detecter si l'email contient une demande de reunion ──────────────────────
 @app.get("/emails/{email_id}/meeting-detect")
 def detect_meeting(email_id: str):
+    email_id = validate_email_id(email_id)
     gmail = get_gmail()
     msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
     h = {x["name"]: x["value"] for x in msg.get("payload", {}).get("headers", [])}
@@ -1572,6 +1728,7 @@ def daily_digest():
 # ── Analyse des pieces jointes (detection metadata) ──────────────────────────
 @app.get("/emails/{email_id}/attachments")
 def get_attachments(email_id: str):
+    email_id = validate_email_id(email_id)
     """Liste les pièces jointes d'un email (metadata seulement, pas de téléchargement)."""
     gmail = get_gmail()
     msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
@@ -1754,6 +1911,7 @@ def stats_timeline():
 # ── Détecter les liens de désabonnement dans un email ────────────────────────
 @app.get("/emails/{email_id}/unsubscribe")
 def detect_unsubscribe(email_id: str):
+    email_id = validate_email_id(email_id)
     """Cherche un lien/email de désabonnement dans les headers et le corps."""
     gmail = get_gmail()
     msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
@@ -1779,7 +1937,9 @@ def detect_unsubscribe(email_id: str):
 
 # ── Suggestions de réponse intelligentes (3 options courtes) ─────────────────
 @app.get("/emails/{email_id}/smart-replies")
-def smart_replies(email_id: str):
+def smart_replies(email_id: str, request: Request = None):
+    email_id = validate_email_id(email_id)
+    if request: check_rate_limit(request, _MAX_AI_REQUESTS_PER_MINUTE)
     """Génère 3 réponses courtes et pertinentes pour un email."""
     gmail = get_gmail()
     msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
@@ -1804,6 +1964,7 @@ def smart_replies(email_id: str):
 # ── Résumé de conversation (thread) ──────────────────────────────────────────
 @app.get("/emails/{email_id}/thread-summary")
 def thread_summary(email_id: str):
+    email_id = validate_email_id(email_id)
     """Résume le fil de conversation complet d'un email."""
     gmail = get_gmail()
     msg = gmail.users().messages().get(userId="me", id=email_id, format="metadata").execute()
@@ -2563,6 +2724,661 @@ def local_cron_worker():
 _cron_thread = threading.Thread(target=local_cron_worker, daemon=True)
 _cron_thread.start()
 log.info("[CRON] Système d'analyse automatique initialisé")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NOUVELLES FEATURES IA — Gratuites, zero dépendances
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. Smart Replies — 3 réponses rapides générées par IA ────────────────────
+@app.get("/emails/{email_id}/smart-replies")
+def smart_replies(email_id: str):
+    email_id = validate_email_id(email_id)
+    gmail = get_gmail()
+    msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
+    h = {x["name"]: x["value"] for x in msg.get("payload",{}).get("headers",[])}
+    body = get_body(msg)[:1500]
+    subject = h.get("Subject","")
+    sender = h.get("From","")
+    system = "Tu génères 3 réponses courtes et naturelles à un email. Réponds UNIQUEMENT en JSON."
+    system = "Tu generes 3 reponses courtes a un email. JSON uniquement."
+    parts_msg = ["Email de: " + sender[:50], "Objet: " + subject[:80], "Contenu: " + body[:400]]
+    parts_msg.append("JSON: {\"replies\": [\"reponse1\", \"reponse2\", \"reponse3\"]}")
+    user = "\n".join(parts_msg)
+    user = "\n".join(parts_msg)
+    try:
+
+
+        import re as _r
+        m2 = _r.search(r'\{.*\}', raw, _r.DOTALL)
+        if m2:
+            data = json.loads(m2.group())
+            return {"replies": data.get("replies", [])[:3]}
+    except Exception:
+        pass
+    return {"replies": ["Merci pour votre message.", "Je reviens vers vous rapidement.", "Bien reçu, je traite ça."]}
+
+# ── 2. Thread Summary — résumé du fil complet ────────────────────────────────
+@app.get("/emails/{email_id}/thread-summary")
+def thread_summary(email_id: str):
+    email_id = validate_email_id(email_id)
+    gmail = get_gmail()
+    msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
+    thread_id = msg.get("threadId","")
+    if not thread_id:
+        raise HTTPException(404, "Thread introuvable")
+    thread = gmail.users().threads().get(userId="me", id=thread_id, format="full").execute()
+    msgs = thread.get("messages",[])
+    parts = []
+    for tm in msgs[-6:]:
+        th = {x["name"]:x["value"] for x in tm.get("payload",{}).get("headers",[])}
+        body = get_body(tm)[:400]
+        parts.append(f"De: {th.get('From','?')[:40]} — {body[:300]}")
+        parts.append("De: " + th.get("From","?")[:40] + " -- " + body[:300])
+    sep = "\n---\n"
+    content = sep.join(parts)
+
+    system = "Tu resumes un fil d'emails en français en 3-5 phrases claires."
+    user = "Fil de " + str(len(msgs)) + " messages:\n" + content[:2000] + "\n\nResume:"
+
+
+    try:
+        summary = call_groq(system, user, 0.3, 400)
+        return {"summary": summary, "message_count": len(msgs)}
+    except Exception as e:
+        log.error(f"Internal error: {e}"); raise HTTPException(500, "Erreur interne")
+
+# ── 3. Détection de désabonnement ────────────────────────────────────────────
+@app.get("/emails/{email_id}/unsubscribe")
+def detect_unsubscribe(email_id: str):
+    email_id = validate_email_id(email_id)
+    gmail = get_gmail()
+    msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
+    h = {x["name"]:x["value"] for x in msg.get("payload",{}).get("headers",[])}
+    unsub_header = h.get("List-Unsubscribe","")
+    body = get_body(msg)[:3000]
+    import re as _r
+    # Chercher liens de désabonnement dans le body
+    links = _r.findall(r'https?://[^\s<>"]+unsub[^\s<>"]*', body, _r.I)
+    mailto = _r.findall(r'mailto:[^\s<>"]+unsub[^\s<>"]*', body, _r.I)
+    return {
+        "has_unsubscribe": bool(unsub_header or links or mailto),
+        "header_link": unsub_header[:200] if unsub_header else None,
+        "body_links": (links + mailto)[:3],
+        "sender": h.get("From","")
+    }
+
+# ── 4. Config IA (modèle, température, profondeur) ───────────────────────────
+GROQ_MODELS = [
+    {"id":"llama-3.3-70b-versatile","name":"LLaMA 3.3 70B","desc":"Meilleur équilibre qualité/vitesse","free":True},
+    {"id":"llama-3.1-8b-instant","name":"LLaMA 3.1 8B","desc":"Ultra-rapide, moins précis","free":True},
+    {"id":"llama3-70b-8192","name":"LLaMA 3 70B","desc":"Puissant, contexte 8k","free":True},
+    {"id":"mixtral-8x7b-32768","name":"Mixtral 8x7B","desc":"Long contexte 32k","free":True},
+    {"id":"gemma2-9b-it","name":"Gemma 2 9B","desc":"Compact et efficace","free":True},
+]
+
+AI_PRESETS = {
+    "rapide":      {"model":"llama-3.1-8b-instant","temperature":0.1,"max_tokens":500,"depth":"quick"},
+    "standard":    {"model":"llama-3.3-70b-versatile","temperature":0.3,"max_tokens":1000,"depth":"normal"},
+    "approfondi":  {"model":"llama-3.3-70b-versatile","temperature":0.2,"max_tokens":2000,"depth":"deep"},
+    "creatif":     {"model":"llama-3.3-70b-versatile","temperature":0.8,"max_tokens":1500,"depth":"normal"},
+    "business":    {"model":"mixtral-8x7b-32768","temperature":0.1,"max_tokens":2000,"depth":"deep"},
+}
+
+@app.get("/ai-config")
+def get_ai_config():
+    cfg = app_state.get("ai_config", {})
+    return {
+        "model": cfg.get("model", GROQ_MODELS[0]["id"]),
+        "temperature": cfg.get("temperature", 0.3),
+        "max_tokens": cfg.get("max_tokens", 1000),
+        "depth": cfg.get("depth", "normal"),
+        "language": cfg.get("language", "fr"),
+        "business_sector": cfg.get("business_sector", ""),
+        "priority_keywords": cfg.get("priority_keywords", []),
+        "vip_senders": cfg.get("vip_senders", []),
+        "custom_categories": cfg.get("custom_categories", []),
+    }
+
+class AIConfigRequest(BaseModel):
+    model: str = "llama-3.3-70b-versatile"
+    temperature: float = 0.3
+    max_tokens: int = 1000
+    depth: str = "normal"
+    language: str = "fr"
+    business_sector: str = ""
+    priority_keywords: list = []
+    vip_senders: list = []
+    custom_categories: list = []
+
+@app.post("/ai-config")
+def set_ai_config(req: AIConfigRequest):
+    with analysis_lock:
+        app_state["ai_config"] = req.dict()
+    save_state(app_state)
+    return {"ok": True}
+
+@app.get("/ai-config/models")
+def get_models():
+    return {"models": GROQ_MODELS}
+
+@app.get("/ai-config/presets")
+def get_presets():
+    return {"presets": AI_PRESETS}
+
+@app.post("/ai-config/test")
+def test_ai_config(req: AIConfigRequest):
+    """Teste le modèle IA avec un email fictif."""
+    global GROQ_MODEL
+    old_model = GROQ_MODEL
+    GROQ_MODEL = req.model
+    try:
+        result = call_groq(
+            "Tu es un assistant email. Réponds en JSON.",
+            "Tu es un assistant email. Reponds en JSON.",
+            "Test: " + req.model,
+
+        )
+        return {"ok": True, "response": result[:200], "model": req.model}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "model": req.model}
+    finally:
+        GROQ_MODEL = old_model
+
+# ── 5. Recherche avancée ──────────────────────────────────────────────────────
+class AdvancedSearchRequest(BaseModel):
+    from_addr: str = ""
+    to_addr: str = ""
+    subject: str = ""
+    body_contains: str = ""
+    date_after: str = ""
+    date_before: str = ""
+    has_attachment: bool = False
+    is_unread: bool = False
+    label: str = ""
+    max_results: int = 20
+
+@app.post("/emails/search-advanced")
+def search_advanced(req: AdvancedSearchRequest):
+    parts = []
+    if req.from_addr:    parts.append("from:" + req.from_addr.strip())
+    if req.to_addr:      parts.append("to:" + req.to_addr.strip())
+    if req.subject:      parts.append("subject:" + req.subject.strip())
+    if req.body_contains:parts.append(req.body_contains.strip())
+    if req.date_after:   parts.append("after:" + req.date_after.strip())
+    if req.date_before:  parts.append("before:" + req.date_before.strip())
+    if req.has_attachment: parts.append("has:attachment")
+    if req.is_unread:    parts.append("is:unread")
+    if req.label:        parts.append("label:" + req.label.strip())
+    query = " ".join(parts) if parts else "in:inbox"
+    gmail = get_gmail()
+    max_r = max(1, min(req.max_results, 50))
+    res = gmail.users().messages().list(userId="me", q=query, maxResults=max_r).execute()
+    emails = []
+    for m2 in res.get("messages",[]):
+        try:
+            msg = gmail.users().messages().get(userId="me", id=m2["id"], format="metadata").execute()
+            h = {x["name"]:x["value"] for x in msg.get("payload",{}).get("headers",[])}
+            emails.append({
+                "id": m2["id"],
+                "subject": h.get("Subject","(Sans objet)")[:80],
+                "from": h.get("From","")[:60],
+                "date": h.get("Date",""),
+                "snippet": msg.get("snippet","")[:100],
+                "unread": "UNREAD" in msg.get("labelIds",[]),
+            })
+        except Exception:
+            continue
+    return {"emails": emails, "count": len(emails), "query": query}
+
+# ── 6. Recherches sauvegardées ────────────────────────────────────────────────
+@app.get("/searches/saved")
+def get_saved_searches():
+    return {"searches": app_state.get("saved_searches", [])}
+
+@app.post("/searches/saved")
+def save_search(name: str, query: str):
+    name = sanitize_str(name, 50, "nom")
+    query = sanitize_query(query)
+    if not name or not query:
+        raise HTTPException(400, "Nom et requête requis")
+    with analysis_lock:
+        searches = app_state.setdefault("saved_searches", [])
+        searches.append({"name": name[:50], "query": query[:200], "saved_at": time.time()})
+        app_state["saved_searches"] = searches[-20:]
+    save_state(app_state)
+    return {"ok": True}
+
+@app.delete("/searches/saved/{name}")
+def delete_saved_search(name: str):
+    with analysis_lock:
+        app_state["saved_searches"] = [s for s in app_state.get("saved_searches",[]) if s.get("name") != name]
+    save_state(app_state)
+    return {"ok": True}
+
+# ── 7. Stats sentiment par expéditeur ────────────────────────────────────────
+@app.get("/stats/sender")
+def stats_by_sender():
+    classified = app_state.get("classified_emails", {})
+    gmail = get_gmail()
+    res = gmail.users().messages().list(userId="me", q="is:inbox newer_than:30d", maxResults=50).execute()
+    senders = {}
+    for msg_ref in res.get("messages",[]):
+        try:
+            msg = gmail.users().messages().get(userId="me", id=msg_ref["id"], format="metadata").execute()
+            h = {x["name"]:x["value"] for x in msg.get("payload",{}).get("headers",[])}
+            sender = h.get("From","")
+            if sender:
+                import re as _r
+                email_m = _r.search(r"[\w.+-]+@[\w.-]+\.\w+", sender)
+                key = email_m.group() if email_m else sender[:40]
+                senders[key] = senders.get(key, 0) + 1
+        except Exception:
+            continue
+    top = sorted(senders.items(), key=lambda x: -x[1])[:15]
+    return {"top_senders": [{"email": k, "count": v} for k, v in top]}
+
+# ── 8. Suggestions d'objet IA ─────────────────────────────────────────────────
+@app.post("/suggest/subject")
+def suggest_subject(body: str = ""):
+    body = sanitize_str(body, 3000, "corps")
+    if not body:
+        raise HTTPException(400, "Corps du message requis")
+    system = "Tu suggères 3 objets d'email percutants en français. JSON uniquement."
+    system = "Tu suggeres 3 objets d'email percutants en francais. JSON uniquement."
+    user = "Corps: " + body[:500] + "\nJSON: {\"subjects\": [\"objet1\", \"objet2\", \"objet3\"]}"
+    try:
+
+        raw = call_groq(system, user, 0.7, 200)
+        m2 = _r.search(r'\{.*\}', raw, _r.DOTALL)
+        if m2:
+            return json.loads(m2.group())
+    except Exception:
+        pass
+    return {"subjects": ["Votre demande", "Suite à notre échange", "Question importante"]}
+
+# ── 9. Correcteur de grammaire ────────────────────────────────────────────────  
+@app.post("/grammar/check")
+def check_grammar(text: str = ""):
+    text = sanitize_str(text, 2000, "texte")
+    if not text or len(text) < 5:
+        raise HTTPException(400, "Texte trop court")
+    system = "Tu corriges la grammaire et le style d'un email en français. JSON uniquement."
+    system = "Tu corriges la grammaire et le style d'un email en francais. JSON uniquement."
+    user = "Texte: " + text[:1000] + "\nJSON: {\"corrected\": \"texte corrige\", \"changes\": [\"correction1\"]}"
+    try:
+
+        raw = call_groq(system, user, 0.1, 600)
+        import re as _r
+        m2 = _r.search(r'\{.*\}', raw, _r.DOTALL)
+        if m2:
+            return json.loads(m2.group())
+    except Exception:
+        pass
+    return {"corrected": text, "changes": []}
+
+# ── 10. Rapport hebdomadaire ──────────────────────────────────────────────────
+@app.get("/reports/weekly")
+def weekly_report():
+    gmail = get_gmail()
+    received = gmail.users().messages().list(userId="me", q="in:inbox newer_than:7d", maxResults=50).execute()
+    sent = gmail.users().messages().list(userId="me", q="in:sent newer_than:7d", maxResults=30).execute()
+    classified = app_state.get("classified_emails", {})
+    cats = {}
+    for m2 in received.get("messages",[]):
+        cat = classified.get(m2["id"], "Non classifié")
+        cats[cat] = cats.get(cat, 0) + 1
+    cats_str = ", ".join(f"{v} {k}" for k,v in cats.items() if k != "Non classifié")
+    n_recv = len(received.get("messages",[]))
+    n_sent = len(sent.get("messages",[]))
+    system = "Tu génères un rapport hebdomadaire de messagerie en français."
+    user = (f"Cette semaine: {n_recv} emails reçus, {n_sent} envoyés. "
+            f"Catégories: {cats_str or 'non analysées'}. "
+            "Génère un bilan de 5-8 phrases avec des insights et 2-3 conseils.")
+    try:
+        report = call_groq(system, user, 0.5, 600)
+        return {"report": report, "received": n_recv, "sent": n_sent, "categories": cats}
+    except Exception as e:
+        log.error(f"Internal error: {e}"); raise HTTPException(500, "Erreur interne")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NOUVELLES FONCTIONNALITÉS — Toutes gratuites
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. Extraction de tâches depuis l'inbox ────────────────────────────────────
+@app.get("/emails/extract-tasks")
+def extract_tasks(max_emails: int = 20):
+    """Scanne les emails récents et extrait les tâches/TODOs avec Groq."""
+    gmail = get_gmail()
+    max_emails = max(1, min(int(max_emails), 30))
+    res = gmail.users().messages().list(userId="me", q="is:inbox newer_than:7d", maxResults=max_emails).execute()
+    all_tasks = []
+    for msg_ref in res.get("messages", [])[:max_emails]:
+        try:
+            msg = gmail.users().messages().get(userId="me", id=msg_ref["id"], format="full").execute()
+            h = {x["name"]:x["value"] for x in msg.get("payload",{}).get("headers",[])}
+            body = get_body(msg)[:1000]
+            subject = h.get("Subject","")[:80]
+            from_addr = h.get("From","")[:60]
+            if not body.strip(): continue
+            system = "Tu extrais les taches et actions requises d un email. JSON uniquement, pas d explication."
+            user = ("Email de: " + from_addr + "\nObjet: " + subject +
+                    "\nCorps: " + body[:600] +
+                    '\nJSON: {"tasks": [{"action": "verbe + objet court", "deadline": "date si mentionnee ou null", "priority": "haute/normale/basse"}], "has_tasks": true/false}')
+            try:
+                raw = call_groq(system, user, 0.1, 400)
+                import re as _r
+                match = _r.search(r"\{.*\}", raw, _r.DOTALL)
+                if match:
+                    data = json.loads(match.group())
+                    if data.get("has_tasks") and data.get("tasks"):
+                        for t in data["tasks"][:3]:
+                            all_tasks.append({
+                                "action": t.get("action","")[:100],
+                                "deadline": t.get("deadline"),
+                                "priority": t.get("priority","normale"),
+                                "email_id": msg_ref["id"],
+                                "email_subject": subject,
+                                "from": from_addr,
+                            })
+                time.sleep(1)
+            except Exception:
+                continue
+        except Exception:
+            continue
+    # Trier par priorité
+    prio = {"haute": 0, "normale": 1, "basse": 2}
+    all_tasks.sort(key=lambda x: prio.get(x.get("priority","normale"), 1))
+    with analysis_lock:
+        app_state["extracted_tasks"] = all_tasks
+    save_state(app_state)
+    return {"tasks": all_tasks, "count": len(all_tasks)}
+
+@app.get("/emails/tasks/cached")
+def get_cached_tasks():
+    return {"tasks": app_state.get("extracted_tasks", []), "count": len(app_state.get("extracted_tasks", []))}
+
+@app.post("/emails/tasks/{idx}/done")
+def mark_task_done(idx: int):
+    with analysis_lock:
+        tasks = app_state.get("extracted_tasks", [])
+        if 0 <= idx < len(tasks):
+            tasks[idx]["done"] = True
+    save_state(app_state)
+    return {"ok": True}
+
+@app.delete("/emails/tasks/{idx}")
+def delete_task(idx: int):
+    with analysis_lock:
+        tasks = app_state.get("extracted_tasks", [])
+        if 0 <= idx < len(tasks):
+            tasks.pop(idx)
+    save_state(app_state)
+    return {"ok": True}
+
+# ── 2. Analyse de ton du brouillon ───────────────────────────────────────────
+class ToneRequest(BaseModel):
+    text: str = ""
+    context: str = ""
+
+@app.post("/emails/analyze-tone")
+def analyze_tone(req: ToneRequest):
+    """Analyse le ton d un brouillon avant envoi."""
+    req.text = sanitize_str(req.text, 3000, "texte")
+    if len(req.text) < 10:
+        raise HTTPException(400, "Texte trop court")
+    system = "Tu analyses le ton d un email professionnel. JSON uniquement."
+    user = ("Email: " + req.text[:1500] +
+            '\nJSON: {"tone": "professionnel/amical/agressif/urgent/neutre/formel",'
+            '"score": 0-100, "issues": ["probleme1"], "suggestions": ["amelioration1"],'
+            '"is_too_long": true/false, "reading_time_seconds": 30}')
+    try:
+        raw = call_groq(system, user, 0.2, 500)
+        import re as _r
+        match = _r.search(r"\{.*\}", raw, _r.DOTALL)
+        if match:
+            return json.loads(match.group())
+    except Exception as e:
+        raise HTTPException(500, "Erreur analyse ton")
+    return {"tone": "neutre", "score": 70, "issues": [], "suggestions": [], "is_too_long": False, "reading_time_seconds": 30}
+
+# ── 3. Export PDF d un thread ─────────────────────────────────────────────────
+@app.get("/emails/{email_id}/thread-pdf")
+def export_thread_pdf(email_id: str):
+    """Génère un PDF propre du fil de conversation."""
+    email_id = validate_email_id(email_id)
+    try:
+        from fpdf import FPDF
+    except ImportError:
+        raise HTTPException(500, "fpdf2 non installé — ajoute 'fpdf2' à requirements.txt")
+    gmail = get_gmail()
+    msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
+    thread_id = msg.get("threadId","")
+    thread = gmail.users().threads().get(userId="me", id=thread_id, format="full").execute()
+    msgs = thread.get("messages",[])
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    # Titre
+    pdf.set_font("Helvetica", "B", 16)
+    h0 = {x["name"]:x["value"] for x in msgs[0].get("payload",{}).get("headers",[])} if msgs else {}
+    subj = h0.get("Subject","Thread email")[:80]
+    pdf.cell(0, 12, txt=subj, ln=True)
+    pdf.set_draw_color(99, 102, 241)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(4)
+    # Messages
+    for i, tm in enumerate(msgs):
+        th = {x["name"]:x["value"] for x in tm.get("payload",{}).get("headers",[])}
+        body = get_body(tm)[:2000]
+        body = "".join(c if ord(c) < 128 else "?" for c in body)
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(245, 247, 255)
+        from_txt = th.get("From","?")[:60]
+        date_txt = th.get("Date","")[:40]
+        pdf.cell(0, 8, txt=f"Message {i+1} | {from_txt} | {date_txt}", ln=True, fill=True)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(60, 60, 80)
+        for line in body.split("\n")[:40]:
+            line = line.strip()[:120]
+            if line:
+                try:
+                    pdf.cell(0, 5, txt=line, ln=True)
+                except Exception:
+                    pass
+        pdf.set_text_color(0,0,0)
+        pdf.ln(4)
+    from fastapi.responses import Response
+    pdf_bytes = pdf.output()
+    return Response(content=bytes(pdf_bytes), media_type="application/pdf",
+                    headers={"Content-Disposition": f"attachment; filename=thread_{email_id[:8]}.pdf"})
+
+# ── 4. Meilleur moment d envoi ─────────────────────────────────────────────────
+@app.get("/emails/best-send-time")
+def best_send_time():
+    """Analyse les patterns de réponse pour suggérer le meilleur moment d envoi."""
+    gmail = get_gmail()
+    res = gmail.users().messages().list(userId="me", q="in:inbox newer_than:30d", maxResults=50).execute()
+    hour_counts = [0]*24
+    day_counts = [0]*7
+    for msg_ref in res.get("messages",[])[:50]:
+        try:
+            msg = gmail.users().messages().get(userId="me", id=msg_ref["id"], format="metadata").execute()
+            ts = int(msg.get("internalDate",0))//1000
+            import datetime as _dt
+            dt = _dt.datetime.fromtimestamp(ts)
+            hour_counts[dt.hour] += 1
+            day_counts[dt.weekday()] += 1
+        except Exception:
+            continue
+    best_hour = hour_counts.index(max(hour_counts))
+    best_day_idx = day_counts.index(max(day_counts))
+    days_fr = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"]
+    return {
+        "best_hour": best_hour,
+        "best_hour_label": f"{best_hour:02d}h00",
+        "best_day": days_fr[best_day_idx],
+        "best_day_idx": best_day_idx,
+        "hour_distribution": hour_counts,
+        "day_distribution": day_counts,
+        "recommendation": f"Envoie le {days_fr[best_day_idx]} vers {best_hour:02d}h pour maximiser tes chances de réponse",
+    }
+
+# ── 5. Sauvegarder un email comme template ────────────────────────────────────
+@app.post("/emails/{email_id}/save-template")
+def save_as_template(email_id: str, template_name: str = ""):
+    """Transforme un email reçu/envoyé en modèle réutilisable."""
+    email_id = validate_email_id(email_id)
+    template_name = sanitize_str(template_name or "Modèle", 80, "nom")
+    gmail = get_gmail()
+    msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
+    h = {x["name"]:x["value"] for x in msg.get("payload",{}).get("headers",[])}
+    body = get_body(msg)[:3000]
+    subject = h.get("Subject","")[:100]
+    # Anonymiser les noms avec des placeholders
+    system = "Tu transformes un email en modèle réutilisable. Remplace les noms propres, entreprises et données spécifiques par des balises {NOM}, {ENTREPRISE}, {DATE}, etc. Retourne uniquement le texte du modèle."
+    user = "Email: " + body[:1500] + "\n\nTexte du modèle:"
+    try:
+        body_template = call_groq(system, user, 0.2, 800)
+    except Exception:
+        body_template = body
+    template = {
+        "name": template_name,
+        "subject": subject,
+        "body": body_template,
+        "source_email": email_id,
+        "created_at": time.time(),
+    }
+    with analysis_lock:
+        templates = app_state.setdefault("email_templates", [])
+        templates.append(template)
+        if len(templates) > 50:
+            app_state["email_templates"] = templates[-50:]
+    save_state(app_state)
+    return {"ok": True, "template": template}
+
+# ── 6. Détection newsletters ─────────────────────────────────────────────────
+@app.get("/emails/newsletters")
+def detect_newsletters():
+    """Détecte toutes les newsletters/listes de diffusion dans la boite."""
+    gmail = get_gmail()
+    res = gmail.users().messages().list(userId="me", q="in:inbox newer_than:30d list:*", maxResults=50).execute()
+    newsletters = {}
+    for msg_ref in res.get("messages",[])[:50]:
+        try:
+            msg = gmail.users().messages().get(userId="me", id=msg_ref["id"], format="metadata").execute()
+            h = {x["name"]:x["value"] for x in msg.get("payload",{}).get("headers",[])}
+            sender = h.get("From","")
+            unsub = h.get("List-Unsubscribe","")
+            list_id = h.get("List-Id","")
+            if unsub or list_id:
+                import re as _r
+                email_m = _r.search(r"[\w.+-]+@[\w.-]+\.\w+", sender)
+                key = email_m.group() if email_m else sender[:50]
+                if key not in newsletters:
+                    newsletters[key] = {
+                        "sender": sender[:80],
+                        "email": key,
+                        "count": 0,
+                        "unsubscribe_link": unsub[:300] if unsub else None,
+                        "list_id": list_id[:100] if list_id else None,
+                        "last_email_id": msg_ref["id"],
+                    }
+                newsletters[key]["count"] += 1
+        except Exception:
+            continue
+    result = sorted(newsletters.values(), key=lambda x: -x["count"])
+    return {"newsletters": result[:30], "count": len(result)}
+
+# ── 7. Désabonnement en masse ─────────────────────────────────────────────────
+@app.post("/emails/batch-archive-newsletter")
+def batch_archive_newsletter(sender_email: str):
+    """Archive tous les emails d une newsletter."""
+    sender_email = sanitize_str(sender_email, 254, "email")
+    gmail = get_gmail()
+    res = gmail.users().messages().list(userId="me",
+        q="from:" + sender_email + " in:inbox", maxResults=30).execute()
+    archived = 0
+    for msg_ref in res.get("messages",[]):
+        try:
+            gmail.users().messages().modify(userId="me", id=msg_ref["id"],
+                body={"removeLabelIds":["INBOX"]}).execute()
+            archived += 1
+        except Exception:
+            continue
+    return {"ok": True, "archived": archived, "sender": sender_email}
+
+# ── 8. Historique des analyses IA ────────────────────────────────────────────
+@app.get("/ai-history")
+def get_ai_history(limit: int = 20):
+    """Retourne l historique des analyses IA stockées."""
+    limit = max(1, min(int(limit), 50))
+    history = []
+    for email_id, result in list(analysis_results.items())[-limit:]:
+        if isinstance(result, dict):
+            history.append({
+                "email_id": email_id,
+                "summary": result.get("summary","")[:100],
+                "category": result.get("main_category",""),
+                "priority": result.get("priority",""),
+                "sentiment": result.get("sentiment",""),
+                "analyzed_at": result.get("analyzed_at", 0),
+            })
+    history.sort(key=lambda x: x.get("analyzed_at",0), reverse=True)
+    return {"history": history[:limit], "total": len(analysis_results)}
+
+# ── 9. Extraction d événement calendrier ─────────────────────────────────────
+@app.get("/emails/{email_id}/calendar-event")
+def extract_calendar_event(email_id: str):
+    """Extrait les informations d une réunion/événement depuis un email."""
+    email_id = validate_email_id(email_id)
+    gmail = get_gmail()
+    msg = gmail.users().messages().get(userId="me", id=email_id, format="full").execute()
+    h = {x["name"]:x["value"] for x in msg.get("payload",{}).get("headers",[])}
+    body = get_body(msg)[:2000]
+    subject = h.get("Subject","")
+    system = "Tu extrais les informations d evenement depuis un email. JSON uniquement."
+    user = ("Objet: " + subject + "\nCorps: " + body[:800] +
+            '\nJSON: {"has_event": true/false, "title": "titre", "date": "JJ/MM/AAAA ou null",'
+            '"time": "HH:MM ou null", "location": "lieu ou null", "duration": "Xh ou null",'
+            '"participants": ["email1"], "description": "resume court"}')
+    try:
+        raw = call_groq(system, user, 0.1, 400)
+        import re as _r
+        match = _r.search(r"\{.*\}", raw, _r.DOTALL)
+        if match:
+            return json.loads(match.group())
+    except Exception:
+        pass
+    return {"has_event": False}
+
+# ── 10. Analyser le temps de réponse moyen ────────────────────────────────────
+@app.get("/stats/response-time")
+def response_time_stats():
+    """Calcule le temps de réponse moyen de l utilisateur."""
+    gmail = get_gmail()
+    sent_res = gmail.users().messages().list(userId="me", q="in:sent newer_than:30d", maxResults=30).execute()
+    times = []
+    for msg_ref in sent_res.get("messages",[])[:30]:
+        try:
+            msg = gmail.users().messages().get(userId="me", id=msg_ref["id"], format="metadata").execute()
+            ts = int(msg.get("internalDate",0))//1000
+            times.append(ts)
+        except Exception:
+            continue
+    if len(times) < 2:
+        return {"avg_response_hours": None, "emails_sent_30d": len(times)}
+    import datetime as _dt
+    diffs = [abs(times[i]-times[i-1]) for i in range(1,len(times))]
+    diffs = [d for d in diffs if d < 86400*3]
+    avg = sum(diffs)/len(diffs) if diffs else 0
+    return {
+        "avg_response_hours": round(avg/3600, 1),
+        "avg_response_label": f"{avg/3600:.1f}h",
+        "emails_sent_30d": len(times),
+        "busiest_hours": [],
+    }
 
 if __name__ == "__main__":
     import uvicorn
